@@ -1,0 +1,17 @@
+# Secrets
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Local data
+uploads/
+chroma_db/
+data/raw/
+data/processed/
+
+# Editor / OS
+.vscode/
+.DS_Store
