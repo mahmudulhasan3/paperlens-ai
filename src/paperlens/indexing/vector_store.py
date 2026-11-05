@@ -1,0 +1,71 @@
+import chromadb
+
+from paperlens.indexing.embeddings import embed_texts
+
+# Phase 2 (Vector store): ChromaDB saves its data in the chroma_db/ folder
+client = chromadb.PersistentClient(path="chroma_db")
+
+
+# Phase 2 (Vector store): open the collection (like a table), or create it the first time
+def get_collection():
+    return client.get_or_create_collection(
+        name="paperlens_chunks",
+        metadata={"hnsw:space": "cosine"},
+    )
+
+
+# Phase 2 (Vector store): embed every chunk and store it with its metadata
+def add_chunks(chunks):
+    collection = get_collection()
+
+    ids = []
+    texts = []
+    metadatas = []
+
+    for chunk in chunks:
+        ids.append(chunk["chunk_id"])
+        texts.append(chunk["text"])
+        metadatas.append(
+            {
+                "doc_id": chunk["doc_id"],
+                "filename": chunk["filename"],
+                "chunk_index": chunk["chunk_index"],
+                "section": chunk["section"],
+                "page_start": chunk["page_start"],
+                "page_end": chunk["page_end"],
+                "word_count": chunk["word_count"],
+            }
+        )
+
+    embeddings = embed_texts(texts)
+
+    collection.upsert(
+        ids=ids,
+        documents=texts,
+        embeddings=embeddings,
+        metadatas=metadatas,
+    )
+
+
+# Phase 2 (Vector store): find the chunks closest in meaning to a question
+def search(question, top_k=5):
+    collection = get_collection()
+    query_vector = embed_texts([question])
+
+    results = collection.query(
+        query_embeddings=query_vector,
+        n_results=top_k,
+    )
+
+    hits = []
+    for i in range(len(results["ids"][0])):
+        hits.append(
+            {
+                "chunk_id": results["ids"][0][i],
+                "text": results["documents"][0][i],  # type: ignore
+                "metadata": results["metadatas"][0][i],  # type: ignore
+                "distance": results["distances"][0][i],  # type: ignore
+            }
+        )
+
+    return hits
