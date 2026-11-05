@@ -17,9 +17,12 @@ def tokenize(text):
     return cleaned.split()
 
 
-# Phase 3 (BM25): build a keyword index from all chunks stored in ChromaDB
-def build_bm25_index():
-    data = get_collection().get(include=["documents", "metadatas"])
+# Phase 3 (BM25): build a keyword index from the chunks of one owner only
+def build_bm25_index(owner_id):
+    data = get_collection().get(
+        where={"owner_id": owner_id},
+        include=["documents", "metadatas"],
+    )
 
     tokenized_docs = []
     for text in data["documents"]: #type: ignore

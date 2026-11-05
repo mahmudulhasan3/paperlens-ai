@@ -28,6 +28,8 @@ def add_chunks(chunks):
         metadatas.append(
             {
                 "doc_id": chunk["doc_id"],
+                "owner_id": chunk["owner_id"],
+                "file_hash": chunk["file_hash"],
                 "filename": chunk["filename"],
                 "chunk_index": chunk["chunk_index"],
                 "section": chunk["section"],
@@ -47,14 +49,33 @@ def add_chunks(chunks):
     )
 
 
-# Phase 2 (Vector store): find the chunks closest in meaning to a question
-def search(question, top_k=5):
+# Phase 2 (Metadata filtering): count how many chunks one owner has
+def count_chunks(owner_id):
+    data = get_collection().get(where={"owner_id": owner_id}, include=[])
+    return len(data["ids"])
+
+
+# Phase 2 (Metadata filtering): check if this owner already uploaded the same file
+def find_document(owner_id, file_hash):
+    data = get_collection().get(
+        where={"$and": [{"owner_id": owner_id}, {"file_hash": file_hash}]},
+        include=["metadatas"],
+    )
+
+    if len(data["ids"]) == 0:
+        return None
+    return data["metadatas"][0] #type: ignore
+
+
+# Phase 2 (Vector store): find the chunks closest in meaning, only inside one owner's documents
+def search(question, owner_id, top_k=5):
     collection = get_collection()
     query_vector = embed_texts([question])
 
     results = collection.query(
         query_embeddings=query_vector,
         n_results=top_k,
+        where={"owner_id": owner_id},
     )
 
     hits = []
@@ -62,9 +83,9 @@ def search(question, top_k=5):
         hits.append(
             {
                 "chunk_id": results["ids"][0][i],
-                "text": results["documents"][0][i],  # type: ignore
-                "metadata": results["metadatas"][0][i],  # type: ignore
-                "distance": results["distances"][0][i],  # type: ignore
+                "text": results["documents"][0][i],  #type: ignore
+                "metadata": results["metadatas"][0][i],  #type: ignore
+                "distance": results["distances"][0][i],  #type: ignore
             }
         )
 

@@ -1,5 +1,5 @@
-# Ingestion step 5 (Metadata): attach document info and a unique id to every chunk
-def add_metadata(chunks, doc_id, filename):
+# Ingestion step 5 (Metadata): attach document info, owner and a unique id to every chunk
+def add_metadata(chunks, doc_id, filename, owner_id, file_hash):
     result = []
     index = 0
 
@@ -10,6 +10,8 @@ def add_metadata(chunks, doc_id, filename):
             {
                 "chunk_id": chunk_id,
                 "doc_id": doc_id,
+                "owner_id": owner_id,
+                "file_hash": file_hash,
                 "filename": filename,
                 "chunk_index": index,
                 "section": chunk["section"],

@@ -42,9 +42,9 @@ def rrf_fuse(dense_hits, keyword_hits, k=60):
     return results
 
 
-# Phase 3 (Hybrid retrieval): run both searches and return the best fused chunks
-def hybrid_search(question, bm25_index, top_k=5, candidates=20):
-    dense_hits = search(question, top_k=candidates)
+# Phase 3 (Hybrid retrieval): run both searches inside one owner's documents and fuse them
+def hybrid_search(question, bm25_index, owner_id, top_k=5, candidates=20):
+    dense_hits = search(question, owner_id, top_k=candidates)
     keyword_hits = bm25_search(bm25_index, question, top_k=candidates)
     fused = rrf_fuse(dense_hits, keyword_hits)
     return fused[:top_k]
