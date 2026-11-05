@@ -5,14 +5,21 @@
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Local data
+# User uploads and local databases
 uploads/
 chroma_db/
+
+# Local data (papers can be copyrighted, so they stay off GitHub)
 data/raw/
 data/processed/
+data/golden/pdfs/
+data/golden/auto_questions.json
+
+# Local test folder
 scripts/
 
-# Editor / OS
+# Editor and OS
 .vscode/
 .DS_Store
