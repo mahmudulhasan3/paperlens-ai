@@ -64,7 +64,7 @@ def find_document(owner_id, file_hash):
 
     if len(data["ids"]) == 0:
         return None
-    return data["metadatas"][0] #type: ignore
+    return data["metadatas"][0]  # type: ignore
 
 
 # Phase 2 (Vector store): find the chunks closest in meaning, only inside one owner's documents
@@ -83,10 +83,40 @@ def search(question, owner_id, top_k=5):
         hits.append(
             {
                 "chunk_id": results["ids"][0][i],
-                "text": results["documents"][0][i],  #type: ignore
-                "metadata": results["metadatas"][0][i],  #type: ignore
-                "distance": results["distances"][0][i],  #type: ignore
+                "text": results["documents"][0][i],  # type: ignore
+                "metadata": results["metadatas"][0][i],  # type: ignore
+                "distance": results["distances"][0][i],  # type: ignore
             }
         )
 
     return hits
+
+
+# Phase 4 (Summarization): get every chunk of one document, in reading order
+def get_document_chunks(owner_id, doc_id):
+    data = get_collection().get(
+        where={"$and": [{"owner_id": owner_id}, {"doc_id": doc_id}]},
+        include=["documents", "metadatas"],
+    )
+
+    pairs = []
+    for i in range(len(data["ids"])):
+        meta = data["metadatas"][i]
+        pairs.append(
+            (
+                meta["chunk_index"],
+                {
+                    "chunk_id": data["ids"][i],
+                    "text": data["documents"][i],
+                    "metadata": meta,
+                },
+            )
+        )
+
+    pairs.sort()
+
+    chunks = []
+    for index, chunk in pairs:
+        chunks.append(chunk)
+
+    return chunks
