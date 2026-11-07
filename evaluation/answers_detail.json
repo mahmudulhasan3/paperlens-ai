@@ -1,0 +1,38 @@
+[
+  {
+    "id": "auto_1",
+    "question": "What percentage of citations in large language models lack faithfulness?",
+    "expected_answer": "Up to 57% of citations lack faithfulness.",
+    "answer": "Up to 57% of citations in large language models lack faithfulness [1][3].",
+    "abstained": false,
+    "citation_precision": 0.5,
+    "citation_recall": 1.0
+  },
+  {
+    "id": "auto_2",
+    "question": "What are the two stages of operation in a RAG system?",
+    "expected_answer": "The first stage retrieves documents that match the user's information need or query, and the second stage uses those retrieved documents to generate an answer.",
+    "answer": "The first stage of a RAG system involves retrieving documents that match a user's information need or query [1][3]. The second stage uses those retrieved documents to generate an answer [1][3].",
+    "abstained": false,
+    "citation_precision": 0.5,
+    "citation_recall": 1.0
+  },
+  {
+    "id": "auto_3",
+    "question": "How many documents does Command-R+ cite on average for a given statement?",
+    "expected_answer": "Command-R+ cites on average 3 documents for a given statement.",
+    "answer": "Command-R+ cites on average 3 documents for a given statement [1].",
+    "abstained": false,
+    "citation_precision": 1.0,
+    "citation_recall": 1.0
+  },
+  {
+    "id": "auto_4",
+    "question": "What is the median length of the statements that citations reference?",
+    "expected_answer": "The statements are typically quite short, with a median length of 4 tokens.",
+    "answer": "The median length of the statements that citations reference is 4 tokens [1].",
+    "abstained": false,
+    "citation_precision": 0.0,
+    "citation_recall": 0.0
+  }
+]
