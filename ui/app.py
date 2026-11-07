@@ -279,3 +279,63 @@ else:
                     st.write(item["text"])
         else:
             st.error(response.json()["detail"])
+
+
+# UI step 6: one box for everything, the router picks the mode
+st.header("6. Ask anything (auto mode)")
+chat_message = st.text_input("Ask, summarize, compare or extract", key="chat_message")
+
+if st.button("Send") and chat_message.strip() != "":
+    with st.spinner("Working..."):
+        response = requests.post(
+            API_URL + "/chat",
+            json={"owner_id": owner_id, "message": chat_message},
+        )
+
+    if response.status_code == 200:
+        data = response.json()
+        st.caption("Detected mode: " + data["mode"])
+
+        if data["needs_document"]:
+            names = []
+            for doc in data["documents"]:
+                names.append(doc["filename"])
+            st.warning(
+                "Which document? Write its file name in your message. You have: "
+                + ", ".join(names)
+            )
+        else:
+            result = data["result"]
+            text = ""
+            if data["mode"] == "qa":
+                text = result["answer"]
+            elif data["mode"] == "summarize":
+                text = result["summary"]
+            elif data["mode"] == "compare":
+                text = result["comparison"]
+            else:
+                text = result["extracted"]
+
+            st.markdown(text)
+
+            if "citations" in result:
+                for item in result["citations"]:
+                    label = (
+                        "["
+                        + str(item["number"])
+                        + "] "
+                        + item["filename"]
+                        + " | "
+                        + item["section"]
+                    )
+                    label = (
+                        label
+                        + " | pages "
+                        + str(item["page_start"])
+                        + "-"
+                        + str(item["page_end"])
+                    )
+                    with st.expander(label):
+                        st.write(item["text"])
+    else:
+        st.error(response.json()["detail"])

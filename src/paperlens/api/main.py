@@ -14,6 +14,7 @@ from paperlens.indexing.vector_store import list_documents
 from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
 from paperlens.modes.extract import extract_from_document
+from paperlens.modes.router import route_message
 
 app = FastAPI(title="PaperLens-AI")
 
@@ -185,5 +186,25 @@ def extract(body: ExtractRequest):
         return extract_from_document(body.owner_id, body.doc_id, body.request)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error))
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="LLM error: " + str(error))
+
+
+# API step: the request body for /chat
+class ChatRequest(BaseModel):
+    owner_id: str
+    message: str
+
+
+# API step: one entry point, the router picks Q&A, Summarize, Compare or Extract
+@app.post("/chat")
+def chat(body: ChatRequest):
+    if body.message.strip() == "":
+        raise HTTPException(status_code=400, detail="Write a message")
+
+    try:
+        return route_message(body.owner_id, body.message)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))
