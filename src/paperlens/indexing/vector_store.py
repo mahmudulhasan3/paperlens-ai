@@ -135,3 +135,27 @@ def list_documents(owner_id):
         result.append({"doc_id": doc_id, "filename": names[doc_id]})
 
     return result
+
+
+# Phase 5 (Compare): find the closest chunks inside one single document
+def search_document(question, owner_id, doc_id, top_k=3):
+    collection = get_collection()
+    query_vector = embed_texts([question])
+
+    results = collection.query(
+        query_embeddings=query_vector,
+        n_results=top_k,
+        where={"$and": [{"owner_id": owner_id}, {"doc_id": doc_id}]},
+    )
+
+    hits = []
+    for i in range(len(results["ids"][0])):
+        hits.append(
+            {
+                "chunk_id": results["ids"][0][i],
+                "text": results["documents"][0][i],
+                "metadata": results["metadatas"][0][i],
+            }
+        )
+
+    return hits
