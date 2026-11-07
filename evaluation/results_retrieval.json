@@ -1,0 +1,14 @@
+{
+  "dense_baseline": {
+    "questions": 4,
+    "hit_at_1": 0.75,
+    "hit_at_5": 0.75,
+    "mrr": 0.781
+  },
+  "hybrid": {
+    "questions": 4,
+    "hit_at_1": 0.75,
+    "hit_at_5": 0.75,
+    "mrr": 0.786
+  }
+}
