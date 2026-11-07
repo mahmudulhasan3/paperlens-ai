@@ -1,3 +1,19 @@
+MIN_SECTION_WORDS = 40
+
+
+# Ingestion step 4 (Chunking): join very short sections into the section before them
+def merge_small_groups(groups):
+    merged = []
+
+    for group in groups:
+        if len(group["words"]) < MIN_SECTION_WORDS and len(merged) > 0:
+            merged[-1]["words"] = merged[-1]["words"] + group["words"]
+        else:
+            merged.append(group)
+
+    return merged
+
+
 # Ingestion step 4 (Chunking): group the labeled words under their section
 def group_by_section(labeled_lines):
     groups = []
@@ -11,7 +27,7 @@ def group_by_section(labeled_lines):
         for word in item["text"].split():
             groups[-1]["words"].append({"word": word, "page": item["page"]})
 
-    return groups
+    return merge_small_groups(groups)
 
 
 # Ingestion step 4 (Chunking): cut each section into overlapping chunks

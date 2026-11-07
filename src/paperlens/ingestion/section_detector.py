@@ -49,10 +49,16 @@ def is_heading_line(item, body_size):
 
     if len(words) > 12:
         return False
-    if text.endswith(".") or text.endswith(","):
+    if text.endswith(".") or text.endswith(",") or text.endswith("-"):
         return False
     if not (text[0].isupper() or text[0].isdigit()):
         return False
+
+    # Figure and table captions are never section headings
+    lowered = text.lower()
+    for start in ["figure ", "fig. ", "fig ", "table "]:
+        if lowered.startswith(start):
+            return False
 
     bigger = item["size"] >= body_size + 1
     bold_text = item["bold"] and item["size"] >= body_size - 0.5

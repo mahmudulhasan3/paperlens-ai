@@ -9,12 +9,10 @@ def load_pdf(pdf_path):
     for page_index in range(len(doc)):
         page = doc[page_index]
         text = page.get_text()
-        pages.append(
-            {
-                "page": page_index + 1,
-                "text": text,
-            }
-        )
+        pages.append({
+            "page": page_index + 1,
+            "text": text,
+        })
 
     doc.close()
     return pages
@@ -41,17 +39,26 @@ def load_pdf_lines(pdf_path):
                 if text == "":
                     continue
 
-                first = line["spans"][0]
-                bold = (first["flags"] & 16) != 0 or "bold" in first["font"].lower()
+                # A line is bold only if every span is bold; its size is the smallest span size
+                all_bold = True
+                smallest = None
+                for span in line["spans"]:
+                    if span["text"].strip() == "":
+                        continue
 
-                lines.append(
-                    {
-                        "page": page_index + 1,
-                        "text": text,
-                        "size": round(first["size"], 1),
-                        "bold": bold,
-                    }
-                )
+                    is_bold = (span["flags"] & 16) != 0 or "bold" in span["font"].lower()
+                    if not is_bold:
+                        all_bold = False
+
+                    if smallest is None or span["size"] < smallest:
+                        smallest = span["size"]
+
+                lines.append({
+                    "page": page_index + 1,
+                    "text": text,
+                    "size": round(smallest, 1),
+                    "bold": all_bold,
+                })
 
     doc.close()
     return lines
