@@ -13,6 +13,7 @@ from paperlens.generation.answer import answer_baseline
 from paperlens.indexing.vector_store import list_documents
 from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
+from paperlens.modes.extract import extract_from_document
 
 app = FastAPI(title="PaperLens-AI")
 
@@ -163,5 +164,26 @@ def compare(body: CompareRequest):
         return compare_documents(body.owner_id, body.doc_ids)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="LLM error: " + str(error))
+
+
+# API step: the request body for /extract
+class ExtractRequest(BaseModel):
+    owner_id: str
+    doc_id: str
+    request: str
+
+
+# API step: extract one kind of information from one document
+@app.post("/extract")
+def extract(body: ExtractRequest):
+    if body.request.strip() == "":
+        raise HTTPException(status_code=400, detail="Write what you want to extract")
+
+    try:
+        return extract_from_document(body.owner_id, body.doc_id, body.request)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))

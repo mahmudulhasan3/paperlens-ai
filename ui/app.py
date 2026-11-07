@@ -159,8 +159,6 @@ else:
             st.error(response.json()["detail"])
 
 
-
-
 # UI step 4: choose two or more documents and compare them
 st.header("4. Compare documents")
 
@@ -193,12 +191,91 @@ else:
                 st.markdown(data["comparison"])
 
                 for item in data["citations"]:
-                    label = "[" + str(item["number"]) + "] " + item["filename"] + " | " + item["section"]
-                    label = label + " | pages " + str(item["page_start"]) + "-" + str(item["page_end"])
+                    label = (
+                        "["
+                        + str(item["number"])
+                        + "] "
+                        + item["filename"]
+                        + " | "
+                        + item["section"]
+                    )
+                    label = (
+                        label
+                        + " | pages "
+                        + str(item["page_start"])
+                        + "-"
+                        + str(item["page_end"])
+                    )
                     with st.expander(label):
                         st.write(item["text"])
 
-                st.caption("Tokens: " + str(data["prompt_tokens"]) + " in, "
-                           + str(data["output_tokens"]) + " out | Latency: " + str(data["latency"]) + " s")
+                st.caption(
+                    "Tokens: "
+                    + str(data["prompt_tokens"])
+                    + " in, "
+                    + str(data["output_tokens"])
+                    + " out | Latency: "
+                    + str(data["latency"])
+                    + " s"
+                )
             else:
                 st.error(response.json()["detail"])
+
+
+# UI step 5: choose one document and extract specific information from it
+st.header("5. Extract information")
+
+if len(documents) == 0:
+    st.info("Upload a PDF to extract information from it")
+else:
+    extract_labels = []
+    for doc in documents:
+        extract_labels.append(doc["filename"] + " (" + doc["doc_id"] + ")")
+
+    extract_choice = st.selectbox(
+        "Choose a document", extract_labels, key="extract_doc"
+    )
+    extract_request = st.text_input(
+        "What should I extract?", placeholder="Extract the limitations"
+    )
+
+    if st.button("Extract") and extract_request.strip() != "":
+        extract_doc_id = documents[extract_labels.index(extract_choice)]["doc_id"]
+
+        with st.spinner("Extracting..."):
+            response = requests.post(
+                API_URL + "/extract",
+                json={
+                    "owner_id": owner_id,
+                    "doc_id": extract_doc_id,
+                    "request": extract_request,
+                },
+            )
+
+        if response.status_code == 200:
+            data = response.json()
+            st.markdown(data["extracted"])
+
+            if data["not_found"]:
+                st.warning("This information was not found in the document.")
+
+            for item in data["citations"]:
+                label = (
+                    "["
+                    + str(item["number"])
+                    + "] "
+                    + item["filename"]
+                    + " | "
+                    + item["section"]
+                )
+                label = (
+                    label
+                    + " | pages "
+                    + str(item["page_start"])
+                    + "-"
+                    + str(item["page_end"])
+                )
+                with st.expander(label):
+                    st.write(item["text"])
+        else:
+            st.error(response.json()["detail"])
