@@ -10,6 +10,8 @@ from paperlens.indexing.vector_store import add_chunks, count_chunks, find_docum
 from paperlens.indexing.bm25_index import build_bm25_index
 from paperlens.retrieval.hybrid import hybrid_search
 from paperlens.generation.answer import answer_baseline
+from paperlens.indexing.vector_store import list_documents
+from paperlens.modes.summarize import summarize_document
 
 app = FastAPI(title="PaperLens-AI")
 
@@ -120,5 +122,28 @@ def answer(body: AnswerRequest):
 
     try:
         return answer_baseline(body.question, body.owner_id, top_k=body.top_k)
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="LLM error: " + str(error))
+
+
+# API step: the request body for /summarize
+class SummarizeRequest(BaseModel):
+    owner_id: str
+    doc_id: str
+
+
+# API step: list the documents of one owner
+@app.get("/documents")
+def documents(owner_id: str):
+    return {"documents": list_documents(owner_id)}
+
+
+# API step: structured summary of one document (Map-Reduce)
+@app.post("/summarize")
+def summarize(body: SummarizeRequest):
+    try:
+        return summarize_document(body.owner_id, body.doc_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error))
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))

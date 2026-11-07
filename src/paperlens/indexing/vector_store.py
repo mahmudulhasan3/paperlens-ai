@@ -120,3 +120,18 @@ def get_document_chunks(owner_id, doc_id):
         chunks.append(chunk)
 
     return chunks
+
+
+# Phase 4 (Summarization): list the documents of one owner, so the user can pick one
+def list_documents(owner_id):
+    data = get_collection().get(where={"owner_id": owner_id}, include=["metadatas"])
+
+    names = {}
+    for meta in data["metadatas"]:
+        names[meta["doc_id"]] = meta["filename"]
+
+    result = []
+    for doc_id in names:
+        result.append({"doc_id": doc_id, "filename": names[doc_id]})
+
+    return result

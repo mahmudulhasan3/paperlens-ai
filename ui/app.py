@@ -114,3 +114,46 @@ if get_answer and question.strip() != "":
         )
     else:
         st.error(response.json()["detail"])
+
+
+# UI step 3: choose one of your documents and summarize it
+st.header("3. Summarize a document")
+
+documents = []
+docs_response = requests.get(API_URL + "/documents", params={"owner_id": owner_id})
+if docs_response.status_code == 200:
+    documents = docs_response.json()["documents"]
+
+if len(documents) == 0:
+    st.info("Upload a PDF to summarize it")
+else:
+    names = []
+    for doc in documents:
+        names.append(doc["filename"])
+
+    chosen = st.selectbox("Choose a document", names)
+
+    if st.button("Summarize"):
+        chosen_id = ""
+        for doc in documents:
+            if doc["filename"] == chosen:
+                chosen_id = doc["doc_id"]
+
+        with st.spinner("Summarizing (about one minute)..."):
+            response = requests.post(
+                API_URL + "/summarize",
+                json={"owner_id": owner_id, "doc_id": chosen_id},
+            )
+
+        if response.status_code == 200:
+            data = response.json()
+            st.markdown(data["summary"])
+            st.caption(
+                "Tokens: "
+                + str(data["total_tokens"])
+                + " | Time: "
+                + str(data["total_latency"])
+                + " s"
+            )
+        else:
+            st.error(response.json()["detail"])
