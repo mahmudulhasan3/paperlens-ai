@@ -2,20 +2,24 @@ import hashlib
 import os
 import uuid
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from paperlens.api.routes.auth import router as auth_router
+from paperlens.auth.dependencies import get_current_user
+from paperlens.db.database import get_db
+from paperlens.db.models import User, Document
 from paperlens.ingestion.pipeline import ingest_pdf
-from paperlens.indexing.vector_store import add_chunks, count_chunks, find_document
+from paperlens.indexing.vector_store import add_chunks, count_chunks, get_collection
 from paperlens.indexing.bm25_index import build_bm25_index
 from paperlens.retrieval.hybrid import hybrid_search
 from paperlens.generation.answer import answer_baseline
-from paperlens.indexing.vector_store import list_documents
 from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
 from paperlens.modes.extract import extract_from_document
 from paperlens.modes.router import route_message
-from paperlens.api.routes.auth import router as auth_router
 
 app = FastAPI(title="PaperLens-AI")
 app.include_router(auth_router)
@@ -23,42 +27,64 @@ app.include_router(auth_router)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# API state: one keyword index per owner, rebuilt after that owner uploads a new PDF
+# API state: one keyword index per user, rebuilt after that user uploads a new PDF
 state = {"indexes": {}}
 
 
-# API step: the request body for /ask
+# API step: request bodies (the user comes from the token, never from the request)
 class AskRequest(BaseModel):
-    owner_id: str
     question: str
     top_k: int = 5
 
 
-# API step: the request body for /answer
-class AnswerRequest(BaseModel):
-    owner_id: str
-    question: str
-    top_k: int = 5
+class SummarizeRequest(BaseModel):
+    doc_id: str
 
 
-# API step: receive a PDF from one owner, process it and store its chunks
+class CompareRequest(BaseModel):
+    doc_ids: list[str]
+
+
+class ExtractRequest(BaseModel):
+    doc_id: str
+    request: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+# API step: the owner id used inside ChromaDB is the id of the logged-in user
+def owner_of(user):
+    return str(user.id)
+
+
+# API step: receive a PDF from the logged-in user, process it and store its chunks
 @app.post("/upload")
-async def upload_pdf(owner_id: str = Form(...), file: UploadFile = File(...)):
-    if owner_id.strip() == "":
-        raise HTTPException(status_code=400, detail="owner_id is required")
-    if not file.filename.lower().endswith(".pdf"): #type: ignore
+def upload_pdf(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    content = await file.read()
+    owner_id = owner_of(current_user)
+    content = file.file.read()
     file_hash = hashlib.sha256(content).hexdigest()
 
-    # Do not process the same file twice for the same owner
-    existing = find_document(owner_id, file_hash)
+    # Do not process the same file twice for the same user
+    existing = db.execute(
+        select(Document).where(
+            Document.user_id == current_user.id, Document.file_hash == file_hash
+        )
+    ).scalar_one_or_none()
+
     if existing is not None:
         return {
             "duplicate": True,
-            "doc_id": existing["doc_id"],
-            "filename": existing["filename"],
+            "doc_id": existing.doc_id,
+            "filename": existing.filename,
             "chunks": 0,
         }
 
@@ -77,6 +103,24 @@ async def upload_pdf(owner_id: str = Form(...), file: UploadFile = File(...)):
         )
 
     add_chunks(chunks)
+
+    document = Document(
+        doc_id=doc_id,
+        user_id=current_user.id,
+        filename=file.filename,
+        file_hash=file_hash,
+        num_chunks=len(chunks),
+    )
+    db.add(document)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        get_collection().delete(where={"doc_id": doc_id})
+        os.remove(save_path)
+        raise HTTPException(status_code=500, detail="Could not save the document")
+
     state["indexes"].pop(owner_id, None)
 
     return {
@@ -87,20 +131,43 @@ async def upload_pdf(owner_id: str = Form(...), file: UploadFile = File(...)):
     }
 
 
-# API step: return the best evidence chunks using only the asking owner's documents
+# API step: list the documents of the logged-in user
+@app.get("/documents")
+def documents(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    rows = (
+        db.execute(
+            select(Document)
+            .where(Document.user_id == current_user.id)
+            .order_by(Document.created_at)
+        )
+        .scalars()
+        .all()
+    )
+
+    result = []
+    for row in rows:
+        result.append(
+            {"doc_id": row.doc_id, "filename": row.filename, "chunks": row.num_chunks}
+        )
+
+    return {"documents": result}
+
+
+# API step: return the best evidence chunks from the user's own documents
 @app.post("/ask")
-def ask(body: AskRequest):
-    if count_chunks(body.owner_id) == 0:
+def ask(body: AskRequest, current_user: User = Depends(get_current_user)):
+    owner_id = owner_of(current_user)
+
+    if count_chunks(owner_id) == 0:
         raise HTTPException(status_code=400, detail="Upload a PDF first")
 
-    if body.owner_id not in state["indexes"]:
-        state["indexes"][body.owner_id] = build_bm25_index(body.owner_id)
+    if owner_id not in state["indexes"]:
+        state["indexes"][owner_id] = build_bm25_index(owner_id)
 
     hits = hybrid_search(
-        body.question,
-        state["indexes"][body.owner_id],
-        body.owner_id,
-        top_k=body.top_k,
+        body.question, state["indexes"][owner_id], owner_id, top_k=body.top_k
     )
 
     results = []
@@ -119,93 +186,64 @@ def ask(body: AskRequest):
     return {"question": body.question, "results": results}
 
 
-# API step: baseline RAG answer (dense search + Gemini) using only the asking owner's documents
+# API step: baseline RAG answer (dense search + Gemini), kept for the final comparison
 @app.post("/answer")
-def answer(body: AnswerRequest):
-    if count_chunks(body.owner_id) == 0:
+def answer(body: AskRequest, current_user: User = Depends(get_current_user)):
+    owner_id = owner_of(current_user)
+
+    if count_chunks(owner_id) == 0:
         raise HTTPException(status_code=400, detail="Upload a PDF first")
 
     try:
-        return answer_baseline(body.question, body.owner_id, top_k=body.top_k)
+        return answer_baseline(body.question, owner_id, top_k=body.top_k)
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))
 
 
-# API step: the request body for /summarize
-class SummarizeRequest(BaseModel):
-    owner_id: str
-    doc_id: str
-
-
-# API step: list the documents of one owner
-@app.get("/documents")
-def documents(owner_id: str):
-    return {"documents": list_documents(owner_id)}
-
-
-# API step: structured summary of one document (Map-Reduce)
+# API step: structured summary of one of the user's documents
 @app.post("/summarize")
-def summarize(body: SummarizeRequest):
+def summarize(body: SummarizeRequest, current_user: User = Depends(get_current_user)):
     try:
-        return summarize_document(body.owner_id, body.doc_id)
+        return summarize_document(owner_of(current_user), body.doc_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error))
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))
 
 
-# API step: the request body for /compare
-class CompareRequest(BaseModel):
-    owner_id: str
-    doc_ids: list[str]
-
-
-# API step: compare two or more documents of one owner
+# API step: compare two or more of the user's documents
 @app.post("/compare")
-def compare(body: CompareRequest):
+def compare(body: CompareRequest, current_user: User = Depends(get_current_user)):
     try:
-        return compare_documents(body.owner_id, body.doc_ids)
+        return compare_documents(owner_of(current_user), body.doc_ids)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))
 
 
-# API step: the request body for /extract
-class ExtractRequest(BaseModel):
-    owner_id: str
-    doc_id: str
-    request: str
-
-
-# API step: extract one kind of information from one document
+# API step: extract one kind of information from one of the user's documents
 @app.post("/extract")
-def extract(body: ExtractRequest):
+def extract(body: ExtractRequest, current_user: User = Depends(get_current_user)):
     if body.request.strip() == "":
         raise HTTPException(status_code=400, detail="Write what you want to extract")
 
     try:
-        return extract_from_document(body.owner_id, body.doc_id, body.request)
+        return extract_from_document(owner_of(current_user), body.doc_id, body.request)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error))
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))
 
 
-# API step: the request body for /chat
-class ChatRequest(BaseModel):
-    owner_id: str
-    message: str
-
-
 # API step: one entry point, the router picks Q&A, Summarize, Compare or Extract
 @app.post("/chat")
-def chat(body: ChatRequest):
+def chat(body: ChatRequest, current_user: User = Depends(get_current_user)):
     if body.message.strip() == "":
         raise HTTPException(status_code=400, detail="Write a message")
 
     try:
-        return route_message(body.owner_id, body.message)
+        return route_message(owner_of(current_user), body.message)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     except Exception as error:
