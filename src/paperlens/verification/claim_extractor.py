@@ -5,6 +5,7 @@ from paperlens.generation.llm import generate_text
 
 # Phase 6 (Claim extraction): the instructions that ask Gemini to split an answer into single facts
 # Phase 6 (Claim extraction): the instructions that ask Gemini to split an answer into single facts
+# Phase 6 (Claim extraction): the instructions that ask Gemini to split an answer into single facts
 def build_claim_prompt(answer):
     prompt = "Split the answer below into individual factual claims.\n"
     prompt = prompt + "Rules:\n"
@@ -14,19 +15,23 @@ def build_claim_prompt(answer):
     )
     prompt = (
         prompt
-        + "2. If a sentence contains several facts (for example a result and the data it was measured on), write each fact as its own claim.\n"
+        + "2. If a sentence contains several independent facts (for example a result and the data it was measured on), write each fact as its own claim.\n"
     )
     prompt = (
         prompt
-        + "3. Do not add, change or improve any fact. Use only what the answer says.\n"
+        + "3. If the answer gives a definition or a list of conditions that must all hold together, keep it as ONE claim. Never split it into separate conditions, because each part alone would change the meaning.\n"
     )
     prompt = (
         prompt
-        + "4. For each claim, list the source numbers written next to it in the answer. For example [1][2] becomes [1, 2]. Use an empty list if there is none.\n"
+        + "4. Do not add, change or improve any fact. Use only what the answer says.\n"
     )
     prompt = (
         prompt
-        + "5. Skip opinions, greetings and sentences that are not factual claims.\n"
+        + "5. For each claim, list the source numbers written next to it in the answer. For example [1][2] becomes [1, 2]. Use an empty list if there is none.\n"
+    )
+    prompt = (
+        prompt
+        + "6. Skip opinions, greetings and sentences that are not factual claims.\n"
     )
     prompt = (
         prompt

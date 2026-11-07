@@ -1,6 +1,6 @@
 from paperlens.indexing.vector_store import list_documents
 from paperlens.generation.llm import generate_text
-from paperlens.generation.answer import answer_baseline
+from paperlens.verification.verified_answer import answer_verified
 from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
 from paperlens.modes.extract import extract_from_document
@@ -83,7 +83,7 @@ def route_message(owner_id, message):
     mentioned = find_mentioned(message, docs)
 
     if mode == "qa":
-        result = answer_baseline(message, owner_id, top_k=5)
+        result = answer_verified(message, owner_id, top_k=5)
         return {
             "mode": mode,
             "needs_document": False,

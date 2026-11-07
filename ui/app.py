@@ -317,6 +317,13 @@ if st.button("Send") and chat_message.strip() != "":
                 text = result["extracted"]
 
             st.markdown(text)
+            if "claims" in result and len(result["claims"]) > 0:
+                with st.expander("Claim verification (" + str(result["removed_claims"]) + " claim(s) removed)"):
+                    for item in result["claims"]:
+                        evidence = ", ".join(item["evidence"])
+                        if evidence == "":
+                            evidence = "no supporting evidence"
+                        st.markdown("**" + item["status"] + "**: " + item["claim"] + "  \n_Evidence: " + evidence + "_")
 
             if "citations" in result:
                 for item in result["citations"]:
