@@ -15,8 +15,10 @@ from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
 from paperlens.modes.extract import extract_from_document
 from paperlens.modes.router import route_message
+from paperlens.api.routes.auth import router as auth_router
 
 app = FastAPI(title="PaperLens-AI")
+app.include_router(auth_router)
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
