@@ -157,3 +157,48 @@ else:
             )
         else:
             st.error(response.json()["detail"])
+
+
+
+
+# UI step 4: choose two or more documents and compare them
+st.header("4. Compare documents")
+
+if len(documents) < 2:
+    st.info("Upload at least two PDFs to compare them")
+else:
+    labels = []
+    for doc in documents:
+        labels.append(doc["filename"] + " (" + doc["doc_id"] + ")")
+
+    chosen_labels = st.multiselect("Choose two or more documents", labels)
+
+    if st.button("Compare"):
+        if len(chosen_labels) < 2:
+            st.warning("Choose at least two documents")
+        else:
+            chosen_ids = []
+            for i in range(len(labels)):
+                if labels[i] in chosen_labels:
+                    chosen_ids.append(documents[i]["doc_id"])
+
+            with st.spinner("Comparing..."):
+                response = requests.post(
+                    API_URL + "/compare",
+                    json={"owner_id": owner_id, "doc_ids": chosen_ids},
+                )
+
+            if response.status_code == 200:
+                data = response.json()
+                st.markdown(data["comparison"])
+
+                for item in data["citations"]:
+                    label = "[" + str(item["number"]) + "] " + item["filename"] + " | " + item["section"]
+                    label = label + " | pages " + str(item["page_start"]) + "-" + str(item["page_end"])
+                    with st.expander(label):
+                        st.write(item["text"])
+
+                st.caption("Tokens: " + str(data["prompt_tokens"]) + " in, "
+                           + str(data["output_tokens"]) + " out | Latency: " + str(data["latency"]) + " s")
+            else:
+                st.error(response.json()["detail"])

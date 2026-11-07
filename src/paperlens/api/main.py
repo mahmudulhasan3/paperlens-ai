@@ -12,6 +12,7 @@ from paperlens.retrieval.hybrid import hybrid_search
 from paperlens.generation.answer import answer_baseline
 from paperlens.indexing.vector_store import list_documents
 from paperlens.modes.summarize import summarize_document
+from paperlens.modes.compare import compare_documents
 
 app = FastAPI(title="PaperLens-AI")
 
@@ -145,5 +146,22 @@ def summarize(body: SummarizeRequest):
         return summarize_document(body.owner_id, body.doc_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error))
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="LLM error: " + str(error))
+
+
+# API step: the request body for /compare
+class CompareRequest(BaseModel):
+    owner_id: str
+    doc_ids: list[str]
+
+
+# API step: compare two or more documents of one owner
+@app.post("/compare")
+def compare(body: CompareRequest):
+    try:
+        return compare_documents(body.owner_id, body.doc_ids)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))
