@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from paperlens.api.routes.auth import router as auth_router
 from paperlens.auth.dependencies import get_current_user
-from paperlens.db.database import get_db
+from paperlens.db.database import Base, engine, get_db
 from paperlens.db.models import User, Document
 from paperlens.ingestion.pipeline import ingest_pdf
 from paperlens.indexing.vector_store import add_chunks, count_chunks, get_collection
@@ -22,6 +22,7 @@ from paperlens.modes.extract import extract_from_document
 from paperlens.modes.router import route_message
 
 app = FastAPI(title="PaperLens-AI")
+Base.metadata.create_all(engine)
 app.include_router(auth_router)
 
 UPLOAD_FOLDER = "uploads"
