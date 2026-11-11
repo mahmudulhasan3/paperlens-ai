@@ -4,14 +4,16 @@ import uuid
 
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from paperlens.api.chat_format import make_assistant_message
 from paperlens.api.routes.auth import router as auth_router
+from paperlens.api.routes.chats import router as chats_router
 from paperlens.auth.dependencies import get_actor
 from paperlens.auth.guests import get_guest, purge_all_guest_data
 from paperlens.db.database import Base, engine, get_db
-from paperlens.db.models import Document
+from paperlens.db.models import Document, ChatSession, ChatMessage
 from paperlens.ingestion.pipeline import ingest_pdf
 from paperlens.indexing.vector_store import add_chunks, count_chunks, get_collection
 from paperlens.indexing.bm25_index import build_bm25_index
@@ -31,6 +33,7 @@ Base.metadata.create_all(engine)
 purge_all_guest_data()
 
 app.include_router(auth_router)
+app.include_router(chats_router)
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -60,6 +63,7 @@ class ExtractRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    chat_id: int | None = None
 
 
 # API step: the answer for a file that the same owner already uploaded
@@ -272,15 +276,61 @@ def extract(body: ExtractRequest, actor: dict = Depends(get_actor)):
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))
 
 
-# API step: one entry point, the router picks Q&A, Summarize, Compare or Extract
+# API step: one entry point, the router picks the mode; registered users get the chat saved
 @app.post("/chat")
-def chat(body: ChatRequest, actor: dict = Depends(get_actor)):
-    if body.message.strip() == "":
+def chat(
+    body: ChatRequest, actor: dict = Depends(get_actor), db: Session = Depends(get_db)
+):
+    message_text = body.message.strip()
+    if message_text == "":
         raise HTTPException(status_code=400, detail="Write a message")
 
+    is_user = actor["kind"] == "user"
+    chat_session = None
+
+    if is_user and body.chat_id is not None:
+        chat_session = db.get(ChatSession, body.chat_id)
+        if chat_session is None or chat_session.user_id != actor["user"].id:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
     try:
-        return route_message(actor["owner_id"], body.message)
+        data = route_message(actor["owner_id"], message_text)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))
+
+    assistant = make_assistant_message(data)
+    data["assistant"] = assistant
+    data["chat_id"] = None
+
+    # Guests keep nothing; the chat of a registered user is saved in PostgreSQL
+    if is_user:
+        try:
+            if chat_session is None:
+                chat_session = ChatSession(
+                    user_id=actor["user"].id, title=message_text[:60]
+                )
+                db.add(chat_session)
+                db.flush()
+
+            db.add(
+                ChatMessage(
+                    session_id=chat_session.id, role="user", content=message_text
+                )
+            )
+            db.add(
+                ChatMessage(
+                    session_id=chat_session.id,
+                    role="assistant",
+                    content=assistant["text"],
+                    data=assistant,
+                )
+            )
+            chat_session.updated_at = func.now()
+            db.commit()
+            data["chat_id"] = chat_session.id
+        except Exception:
+            db.rollback()
+
+    return data
