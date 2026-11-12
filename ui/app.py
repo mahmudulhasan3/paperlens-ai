@@ -1,7 +1,12 @@
+import html
+import time
+
 import requests
 import streamlit as st
 
 API_URL = "http://127.0.0.1:8000"
+LINKEDIN_URL = "https://www.linkedin.com/in/mahmudulhasan03"
+THEME_LABELS = ["System", "Light", "Dark"]
 
 st.set_page_config(
     page_title="PaperLens-AI", layout="centered", initial_sidebar_state="expanded"
@@ -27,6 +32,29 @@ div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"
 """
 st.markdown(STYLE, unsafe_allow_html=True)
 
+# UI step 0: the dark colours (used for the dark theme, and for the system theme when the computer is dark)
+DARK_RULES = """
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stBottom"], [data-testid="stBottom"] > div {background: #212121 !important;}
+section[data-testid="stSidebar"], section[data-testid="stSidebar"] > div {background: #171717 !important;}
+.stApp, .stApp p, .stApp span, .stApp label, .stApp li, .stApp h1, .stApp h2, .stApp h3, .stApp h4, [data-testid="stMarkdownContainer"] {color: #ececec !important;}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {color: #a1a1aa !important;}
+a {color: #8ab4f8 !important;}
+hr {border-color: #3a3a3a !important;}
+[data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="base-input"], [data-baseweb="select"] > div {background: #2f2f2f !important; border-color: #4d4d4d !important;}
+input, textarea {color: #ececec !important; -webkit-text-fill-color: #ececec !important;}
+[data-testid="stChatInput"], [data-testid="stChatInput"] > div {background: #2f2f2f !important; border-color: #4d4d4d !important;}
+[data-testid="stBaseButton-secondary"] {background: #2f2f2f !important; color: #ececec !important; border-color: #4d4d4d !important;}
+[data-testid="stBaseButton-secondary"]:hover {background: #3a3a3a !important;}
+section[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] {background: transparent !important; border: none !important;}
+section[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]:hover {background: #2a2a2a !important;}
+[data-testid="stBaseButton-primary"] {background: #10a37f !important; border: none !important;}
+[data-testid="stBaseButton-primary"] p {color: #ffffff !important;}
+[data-testid="stExpander"] {border-color: #4d4d4d !important; background: #262626 !important;}
+div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {background: #2f2f2f !important;}
+div[role="dialog"], div[role="dialog"] > div {background: #2b2b2b !important;}
+[data-testid="stFileUploaderDropzone"] {background: #2f2f2f !important;}
+"""
+
 # UI step 0: everything that must survive a rerun lives in the session
 DEFAULTS = {
     "token": None,
@@ -36,10 +64,25 @@ DEFAULTS = {
     "messages": [],
     "chat_id": None,
     "pending": None,
+    "profile": None,
+    "theme": "system",
+    "animate": False,
 }
 for key in DEFAULTS:
     if key not in st.session_state:
         st.session_state[key] = DEFAULTS[key]
+
+
+# UI helper: the CSS of the chosen theme (light is the normal look, so it needs no extra CSS)
+def theme_css(theme):
+    if theme == "dark":
+        return "<style>" + DARK_RULES + "</style>"
+    if theme == "system":
+        return "<style>@media (prefers-color-scheme: dark) {" + DARK_RULES + "}</style>"
+    return ""
+
+
+st.markdown(theme_css(st.session_state["theme"]), unsafe_allow_html=True)
 
 
 # UI helper: forget the login or guest session and everything shown on the screen
@@ -50,6 +93,9 @@ def clear_session():
     st.session_state["messages"] = []
     st.session_state["chat_id"] = None
     st.session_state["pending"] = None
+    st.session_state["profile"] = None
+    st.session_state["theme"] = "system"
+    st.session_state["animate"] = False
 
 
 # UI helper: send a request to the API with the token, and start over if the token is no longer valid
@@ -65,6 +111,67 @@ def call_api(method, path, **kwargs):
         st.rerun()
 
     return response
+
+
+# UI helper: read the profile of a registered user and use the theme that was saved in it
+def load_profile():
+    response = call_api("GET", "/profile")
+
+    if response.status_code == 200:
+        st.session_state["profile"] = response.json()
+        st.session_state["theme"] = st.session_state["profile"]["theme"]
+
+
+# UI helper: the first letters of a name, shown when there is no photo
+def initials_of(name):
+    letters = ""
+
+    for part in name.split()[:2]:
+        letters = letters + part[0].upper()
+
+    if letters == "":
+        letters = "?"
+
+    return letters
+
+
+# UI helper: a round profile photo, or a round circle with the initials
+def avatar_html(avatar, name, size):
+    size_text = str(size) + "px"
+
+    if avatar != "":
+        return (
+            '<img src="data:image/jpeg;base64,'
+            + avatar
+            + '" style="width:'
+            + size_text
+            + ";height:"
+            + size_text
+            + ';border-radius:50%;object-fit:cover;">'
+        )
+
+    style = (
+        "width:"
+        + size_text
+        + ";height:"
+        + size_text
+        + ";border-radius:50%;background:#10a37f;"
+    )
+    style = (
+        style
+        + "color:#ffffff;display:flex;align-items:center;justify-content:center;font-weight:600;"
+    )
+    return '<div style="' + style + '">' + html.escape(initials_of(name)) + "</div>"
+
+
+# UI helper: give the words of a text one by one, so the answer appears smoothly
+def word_stream(text):
+    words = text.split(" ")
+    delay = min(0.03, 4.0 / max(len(words), 1))
+
+    for word in words:
+        yield word + " "
+        time.sleep(delay)
 
 
 # UI helper: build one assistant message with every field the screen needs
@@ -89,12 +196,15 @@ def make_message(data, mode=None):
     return message
 
 
-# UI helper: draw one assistant message with its claim table and citations
-def show_assistant_message(message):
+# UI helper: draw one assistant message (typed word by word if it is new) with its claim table and citations
+def show_assistant_message(message, animate=False):
     if message["mode"] not in ["error", "notice"]:
         st.caption("Mode: " + message["mode"])
 
-    st.markdown(message["text"])
+    if animate and message["mode"] not in ["error", "notice"]:
+        st.write_stream(word_stream(message["text"]))
+    else:
+        st.markdown(message["text"])
 
     if len(message["claims"]) > 0:
         with st.expander(
@@ -165,6 +275,55 @@ def delete_chat(chat_id):
     st.rerun()
 
 
+# UI helper: the settings window of a registered user (photo, name, profile, email and appearance)
+@st.dialog("Settings")
+def settings_dialog():
+    profile = st.session_state["profile"]
+
+    st.markdown(
+        avatar_html(profile["avatar"], profile["name"], 80), unsafe_allow_html=True
+    )
+    photo = st.file_uploader(
+        "Profile photo", type=["png", "jpg", "jpeg", "webp"], key="photo_upload"
+    )
+    name = st.text_input("Name", value=profile["display_name"], max_chars=100)
+    bio = st.text_area("Profile", value=profile["bio"], max_chars=500, height=100)
+    st.text_input("Email", value=profile["email"], disabled=True)
+
+    current_label = profile["theme"].capitalize()
+    theme_label = st.selectbox(
+        "Appearance", THEME_LABELS, index=THEME_LABELS.index(current_label)
+    )
+
+    col_save, col_remove = st.columns(2)
+
+    if col_save.button("Save", type="primary"):
+        if photo is not None:
+            files = {"file": (photo.name, photo.getvalue(), photo.type)}
+            response = call_api("POST", "/profile/avatar", files=files)
+            if response.status_code != 200:
+                st.error(str(response.json()["detail"]))
+                st.stop()
+
+        response = call_api(
+            "PUT",
+            "/profile",
+            json={"display_name": name, "bio": bio, "theme": theme_label.lower()},
+        )
+        if response.status_code != 200:
+            st.error(str(response.json()["detail"]))
+            st.stop()
+
+        load_profile()
+        st.rerun()
+
+    if profile["avatar"] != "":
+        if col_remove.button("Remove photo"):
+            call_api("DELETE", "/profile/avatar")
+            load_profile()
+            st.rerun()
+
+
 # UI step 1: the welcome screen with login, registration and guest access
 if st.session_state["token"] is None:
     st.markdown(
@@ -232,12 +391,17 @@ if st.session_state["token"] is None:
     )
     st.stop()
 
-# UI step 2: the sidebar with new chat, saved chats, your papers and the account
+# UI step 2: load the profile of a registered user once, and the papers of this owner
+if not st.session_state["is_guest"] and st.session_state["profile"] is None:
+    load_profile()
+    st.rerun()
+
 documents = []
 documents_response = call_api("GET", "/documents")
 if documents_response.status_code == 200:
     documents = documents_response.json()["documents"]
 
+# UI step 3: the sidebar with new chat, saved chats, your papers, the account and the credit
 with st.sidebar:
     st.markdown("### PaperLens-AI")
 
@@ -279,16 +443,55 @@ with st.sidebar:
         st.caption("• " + doc["filename"])
 
     st.divider()
+
     if st.session_state["is_guest"]:
-        st.caption("Guest session")
+        account_name = "Guest"
+        account_line = "Temporary session"
+        account_avatar = ""
+
+        guest_label = st.selectbox(
+            "Appearance",
+            THEME_LABELS,
+            index=THEME_LABELS.index(st.session_state["theme"].capitalize()),
+        )
+        if guest_label.lower() != st.session_state["theme"]:
+            st.session_state["theme"] = guest_label.lower()
+            st.rerun()
     else:
-        st.caption(st.session_state["email"])
+        account_name = st.session_state["profile"]["name"]
+        account_line = st.session_state["profile"]["email"]
+        account_avatar = st.session_state["profile"]["avatar"]
+
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:10px;">'
+        + avatar_html(account_avatar, account_name, 38)
+        + '<div style="line-height:1.25;"><b>'
+        + html.escape(account_name)
+        + "</b><br>"
+        + '<span style="font-size:0.75rem;opacity:0.7;">'
+        + html.escape(account_line)
+        + "</span></div></div>",
+        unsafe_allow_html=True,
+    )
+
+    if not st.session_state["is_guest"]:
+        if st.button("Settings"):
+            settings_dialog()
 
     if st.button("End guest session" if st.session_state["is_guest"] else "Log out"):
         clear_session()
         st.rerun()
 
-# UI step 3: the message box (it is pinned to the bottom) and what the user sent
+    st.divider()
+    st.markdown(
+        '<div style="font-size:0.8rem;line-height:1.5;">Developed by '
+        + '<a href="'
+        + LINKEDIN_URL
+        + '" target="_blank"><b>Mahmudul Hasan</b></a></div>',
+        unsafe_allow_html=True,
+    )
+
+# UI step 4: the message box (it is pinned to the bottom) and what the user sent
 prompt = st.chat_input(
     "Ask about your papers, or attach PDFs", accept_file="multiple", file_type=["pdf"]
 )
@@ -305,7 +508,7 @@ if st.session_state["pending"] is not None:
 
 has_input = incoming_text != "" or len(incoming_files) > 0
 
-# UI step 4: the welcome text and the suggestions on an empty chat
+# UI step 5: the welcome text and the suggestions on an empty chat
 if len(st.session_state["messages"]) == 0 and not has_input:
     st.markdown(
         "<h2 style='text-align: center; margin-top: 3rem;'>What would you like to know about your papers?</h2>",
@@ -314,7 +517,7 @@ if len(st.session_state["messages"]) == 0 and not has_input:
 
     if len(documents) == 0:
         st.markdown(
-            "<p style='text-align: center; color: #6e6e80;'></p>",
+            "<p style='text-align: center; color: #6e6e80;'>Attach a PDF with the + in the message box to begin.</p>",
             unsafe_allow_html=True,
         )
     else:
@@ -334,7 +537,7 @@ if len(st.session_state["messages"]) == 0 and not has_input:
                 st.session_state["pending"] = suggestions[i]
                 st.rerun()
 
-# UI step 5: upload the attached PDFs, one after another
+# UI step 6: upload the attached PDFs, one after another
 for uploaded in incoming_files:
     files = {"file": (uploaded.name, uploaded.getvalue(), "application/pdf")}
 
@@ -365,15 +568,23 @@ for uploaded in incoming_files:
 if incoming_text != "":
     st.session_state["messages"].append({"role": "user", "content": incoming_text})
 
-# UI step 6: draw the whole conversation
-for message in st.session_state["messages"]:
+# UI step 7: draw the whole conversation, the newest answer is typed word by word
+last_index = len(st.session_state["messages"]) - 1
+
+for index in range(len(st.session_state["messages"])):
+    message = st.session_state["messages"][index]
+
     with st.chat_message(message["role"]):
         if message["role"] == "user":
             st.markdown(message["content"])
         else:
-            show_assistant_message(message)
+            show_assistant_message(
+                message, animate=st.session_state["animate"] and index == last_index
+            )
 
-# UI step 7: answer the message, then redraw the page so the sidebar is up to date
+st.session_state["animate"] = False
+
+# UI step 8: answer the message, then redraw the page so the sidebar is up to date
 if incoming_text != "":
     with st.chat_message("assistant"):
         with st.spinner("Finding evidence and verifying the answer..."):
@@ -386,6 +597,7 @@ if incoming_text != "":
     if response.status_code == 200:
         data = response.json()
         st.session_state["messages"].append(make_message(data["assistant"]))
+        st.session_state["animate"] = True
         if data["chat_id"] is not None:
             st.session_state["chat_id"] = data["chat_id"]
     else:
