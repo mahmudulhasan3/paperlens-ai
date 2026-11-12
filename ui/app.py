@@ -183,10 +183,20 @@ def make_message(data, mode=None):
         "claims": [],
         "removed": 0,
         "citations": [],
+        "used": [],
+        "choices": [],
     }
 
     if data is not None:
-        for key in ["mode", "text", "claims", "removed", "citations"]:
+        for key in [
+            "mode",
+            "text",
+            "claims",
+            "removed",
+            "citations",
+            "used",
+            "choices",
+        ]:
             if key in data:
                 message[key] = data[key]
 
@@ -196,15 +206,28 @@ def make_message(data, mode=None):
     return message
 
 
-# UI helper: draw one assistant message (typed word by word if it is new) with its claim table and citations
-def show_assistant_message(message, animate=False):
+# UI helper: draw one assistant message (typed word by word if it is new) with its paper buttons, claim table and citations
+def show_assistant_message(
+    message, animate=False, asked="", show_choices=False, key_prefix="m"
+):
     if message["mode"] not in ["error", "notice"]:
-        st.caption("Mode: " + message["mode"])
+        caption = "Mode: " + message["mode"]
+        if len(message["used"]) > 0:
+            caption = caption + " | Paper: " + ", ".join(message["used"])
+        st.caption(caption)
 
     if animate and message["mode"] not in ["error", "notice"]:
         st.write_stream(word_stream(message["text"]))
     else:
         st.markdown(message["text"])
+
+    # One click chooses the paper, the question is sent again with the file name in brackets
+    if show_choices and asked != "":
+        for position in range(len(message["choices"])):
+            filename = message["choices"][position]
+            if st.button(filename, key="choice_" + key_prefix + "_" + str(position)):
+                st.session_state["pending"] = asked + " (" + filename + ")"
+                st.rerun()
 
     if len(message["claims"]) > 0:
         with st.expander(
@@ -578,8 +601,16 @@ for index in range(len(st.session_state["messages"])):
         if message["role"] == "user":
             st.markdown(message["content"])
         else:
+            asked = ""
+            if index > 0 and st.session_state["messages"][index - 1]["role"] == "user":
+                asked = st.session_state["messages"][index - 1]["content"]
+
             show_assistant_message(
-                message, animate=st.session_state["animate"] and index == last_index
+                message,
+                animate=st.session_state["animate"] and index == last_index,
+                asked=asked,
+                show_choices=(index == last_index),
+                key_prefix=str(index),
             )
 
 st.session_state["animate"] = False

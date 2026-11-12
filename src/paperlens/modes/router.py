@@ -1,24 +1,16 @@
 from paperlens.indexing.vector_store import list_documents
 from paperlens.generation.llm import generate_text
-from paperlens.generation.language import (
-    detect_language,
-    translate_to_english,
-    translate_to_bangla,
-)
+from paperlens.generation.language import detect_language, translate_to_english, translate_to_bangla
 from paperlens.generation.verified_answer import answer_verified
 from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
 from paperlens.modes.extract import extract_from_document
 
 MODES = ["qa", "summarize", "compare", "extract"]
+MAX_COMPARE = 4
 
 # Router step: the name of the main text field in the result of every mode
-TEXT_KEYS = {
-    "qa": "answer",
-    "summarize": "summary",
-    "compare": "comparison",
-    "extract": "extracted",
-}
+TEXT_KEYS = {"qa": "answer", "summarize": "summary", "compare": "comparison", "extract": "extracted"}
 
 
 # Phase 5 (Router): the instructions that ask Gemini for one label
@@ -28,9 +20,7 @@ def build_router_prompt(message):
     prompt = prompt + "qa: a question to be answered from the documents\n"
     prompt = prompt + "summarize: wants an overview or summary of a whole document\n"
     prompt = prompt + "compare: wants two or more documents compared\n"
-    prompt = (
-        prompt + "extract: wants one specific part or list pulled out of a document\n"
-    )
+    prompt = prompt + "extract: wants one specific part or list pulled out of a document\n"
     prompt = prompt + "Reply with only the label, nothing else.\n\n"
     prompt = prompt + "Examples:\n"
     prompt = prompt + "Give me an overview of the paper -> summarize\n"
@@ -66,11 +56,19 @@ def classify_intent(message):
     return "qa"
 
 
-# Phase 5 (Router): find the documents whose file name appears in the message
+# Phase 5 (Router): find the documents named in the message, the full file name first (paper1.pdf before paper1)
 def find_mentioned(message, docs):
     lowered = message.lower()
-    mentioned = []
 
+    exact = []
+    for doc in docs:
+        if doc["filename"].lower() in lowered:
+            exact.append(doc)
+
+    if len(exact) > 0:
+        return exact
+
+    mentioned = []
     for doc in docs:
         name = doc["filename"].lower()
         if name.endswith(".pdf"):
@@ -87,10 +85,16 @@ def need_document(mode, docs):
 
 
 # Phase 5 (Router, language): the result of a mode, translated into Bangla when the user wrote in Bangla
-def finish(mode, result, language):
+def finish(mode, result, language, used=None):
     if language == "bangla":
         key = TEXT_KEYS[mode]
         result[key] = translate_to_bangla(result[key])
+
+    names = []
+    if used is not None:
+        for doc in used:
+            names.append(doc["filename"])
+    result["used_documents"] = names
 
     return {"mode": mode, "needs_document": False, "documents": [], "result": result}
 
@@ -118,9 +122,10 @@ def route_message(owner_id, message):
         if len(docs) < 2:
             raise ValueError("Upload at least two PDFs to compare them")
 
+        # No names needed: compare the named papers, or all papers when there are only a few
         if len(mentioned) >= 2:
             targets = mentioned
-        elif len(docs) == 2:
+        elif len(docs) <= MAX_COMPARE:
             targets = docs
         else:
             return need_document(mode, docs)
@@ -129,7 +134,7 @@ def route_message(owner_id, message):
         for doc in targets:
             ids.append(doc["doc_id"])
         result = compare_documents(owner_id, ids)
-        return finish(mode, result, language)
+        return finish(mode, result, language, targets)
 
     # summarize and extract work on one document
     if len(mentioned) == 1:
@@ -144,4 +149,4 @@ def route_message(owner_id, message):
     else:
         result = extract_from_document(owner_id, target["doc_id"], english_message)
 
-    return finish(mode, result, language)
+    return finish(mode, result, language, [target])

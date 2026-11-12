@@ -1,3 +1,6 @@
+from paperlens.modes.router import MAX_COMPARE
+
+
 # Chat step: turn the answer of the router into one simple message that can be saved and shown again
 def make_assistant_message(data):
     message = {
@@ -6,16 +9,22 @@ def make_assistant_message(data):
         "claims": [],
         "removed": 0,
         "citations": [],
+        "used": [],
+        "choices": [],
     }
 
     if data["needs_document"]:
-        names = []
-        for doc in data["documents"]:
-            names.append(doc["filename"])
-        message["text"] = (
-            "Which document? Write its file name in your message. You have: "
-            + ", ".join(names)
-        )
+        if data["mode"] == "compare":
+            message["text"] = (
+                "You have more than "
+                + str(MAX_COMPARE)
+                + " papers. Name the papers to compare, "
+                "for example: Compare paper1.pdf and paper2.pdf."
+            )
+        else:
+            message["text"] = "Which paper do you mean? Choose one below."
+            for doc in data["documents"]:
+                message["choices"].append(doc["filename"])
         return message
 
     result = data["result"]
@@ -34,5 +43,7 @@ def make_assistant_message(data):
         message["removed"] = result["removed_claims"]
     if "citations" in result:
         message["citations"] = result["citations"]
+
+    message["used"] = result.get("used_documents", [])
 
     return message
