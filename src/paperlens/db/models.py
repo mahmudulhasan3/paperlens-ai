@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    ForeignKey,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from paperlens.db.database import Base
@@ -57,3 +65,18 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+# Database step: the profile of a registered user (name, about text, theme and a small profile photo)
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    display_name: Mapped[str] = mapped_column(String(100), default="")
+    bio: Mapped[str] = mapped_column(String(500), default="")
+    theme: Mapped[str] = mapped_column(String(10), default="system")
+    avatar: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    avatar_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now())

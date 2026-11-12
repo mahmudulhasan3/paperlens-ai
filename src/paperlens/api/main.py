@@ -12,6 +12,7 @@ from paperlens.api.routes.auth import router as auth_router
 from paperlens.api.routes.chats import router as chats_router
 from paperlens.auth.dependencies import get_actor
 from paperlens.auth.guests import get_guest, purge_all_guest_data
+from paperlens.api.routes.profile import router as profile_router
 from paperlens.db.database import Base, engine, get_db
 from paperlens.db.models import Document, ChatSession, ChatMessage
 from paperlens.ingestion.pipeline import ingest_pdf
@@ -34,6 +35,7 @@ purge_all_guest_data()
 
 app.include_router(auth_router)
 app.include_router(chats_router)
+app.include_router(profile_router)
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
