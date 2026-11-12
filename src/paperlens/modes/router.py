@@ -1,11 +1,24 @@
 from paperlens.indexing.vector_store import list_documents
 from paperlens.generation.llm import generate_text
-from paperlens.verification.verified_answer import answer_verified
+from paperlens.generation.language import (
+    detect_language,
+    translate_to_english,
+    translate_to_bangla,
+)
+from paperlens.generation.verified_answer import answer_verified
 from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
 from paperlens.modes.extract import extract_from_document
 
 MODES = ["qa", "summarize", "compare", "extract"]
+
+# Router step: the name of the main text field in the result of every mode
+TEXT_KEYS = {
+    "qa": "answer",
+    "summarize": "summary",
+    "compare": "comparison",
+    "extract": "extracted",
+}
 
 
 # Phase 5 (Router): the instructions that ask Gemini for one label
@@ -73,23 +86,33 @@ def need_document(mode, docs):
     return {"mode": mode, "needs_document": True, "documents": docs, "result": None}
 
 
+# Phase 5 (Router, language): the result of a mode, translated into Bangla when the user wrote in Bangla
+def finish(mode, result, language):
+    if language == "bangla":
+        key = TEXT_KEYS[mode]
+        result[key] = translate_to_bangla(result[key])
+
+    return {"mode": mode, "needs_document": False, "documents": [], "result": result}
+
+
 # Phase 5 (Router): classify the message, pick the document(s) and run the right mode
 def route_message(owner_id, message):
     docs = list_documents(owner_id)
     if len(docs) == 0:
         raise ValueError("Upload a PDF first")
 
-    mode = classify_intent(message)
-    mentioned = find_mentioned(message, docs)
+    # Language step: all work is done in English, the final text is translated back for Bangla users
+    language = detect_language(message)
+    english_message = message
+    if language == "bangla":
+        english_message = translate_to_english(message)
+
+    mode = classify_intent(english_message)
+    mentioned = find_mentioned(message + " " + english_message, docs)
 
     if mode == "qa":
-        result = answer_verified(message, owner_id, top_k=5)
-        return {
-            "mode": mode,
-            "needs_document": False,
-            "documents": [],
-            "result": result,
-        }
+        result = answer_verified(english_message, owner_id, top_k=5)
+        return finish(mode, result, language)
 
     if mode == "compare":
         if len(docs) < 2:
@@ -106,12 +129,7 @@ def route_message(owner_id, message):
         for doc in targets:
             ids.append(doc["doc_id"])
         result = compare_documents(owner_id, ids)
-        return {
-            "mode": mode,
-            "needs_document": False,
-            "documents": [],
-            "result": result,
-        }
+        return finish(mode, result, language)
 
     # summarize and extract work on one document
     if len(mentioned) == 1:
@@ -124,6 +142,6 @@ def route_message(owner_id, message):
     if mode == "summarize":
         result = summarize_document(owner_id, target["doc_id"])
     else:
-        result = extract_from_document(owner_id, target["doc_id"], message)
+        result = extract_from_document(owner_id, target["doc_id"], english_message)
 
-    return {"mode": mode, "needs_document": False, "documents": [], "result": result}
+    return finish(mode, result, language)
