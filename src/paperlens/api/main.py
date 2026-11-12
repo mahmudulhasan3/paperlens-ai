@@ -1,20 +1,23 @@
 import hashlib
 import os
+import time
 import uuid
+from datetime import timedelta
 
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from paperlens import limits
 from paperlens.api.chat_format import make_assistant_message
 from paperlens.api.routes.auth import router as auth_router
 from paperlens.api.routes.chats import router as chats_router
+from paperlens.api.routes.profile import router as profile_router
 from paperlens.auth.dependencies import get_actor
 from paperlens.auth.guests import get_guest, purge_all_guest_data
-from paperlens.api.routes.profile import router as profile_router
 from paperlens.db.database import Base, engine, get_db
-from paperlens.db.models import Document, ChatSession, ChatMessage
+from paperlens.db.models import Document, ChatSession, ChatMessage, QueryLog
 from paperlens.ingestion.pipeline import ingest_pdf
 from paperlens.indexing.vector_store import add_chunks, count_chunks, get_collection
 from paperlens.indexing.bm25_index import build_bm25_index
@@ -73,6 +76,59 @@ def duplicate_response(doc_id, filename):
     return {"duplicate": True, "doc_id": doc_id, "filename": filename, "chunks": 0}
 
 
+# Limits step: the largest file size in MB for a guest or a registered user
+def max_file_mb(is_guest):
+    if is_guest:
+        return limits.GUEST_MAX_FILE_MB
+
+    return limits.USER_MAX_FILE_MB
+
+
+# Limits step: stop with 429 when the owner has used all the questions that are allowed
+def check_query_limit(actor, db):
+    if actor["kind"] == "guest":
+        guest = get_guest(actor["owner_id"])
+        if guest["queries"] >= limits.GUEST_MAX_QUERIES:
+            raise HTTPException(
+                status_code=429,
+                detail="Guest limit reached ("
+                + str(limits.GUEST_MAX_QUERIES)
+                + " questions). Create an account to continue.",
+            )
+        return
+
+    used = db.execute(
+        select(func.count(QueryLog.id)).where(
+            QueryLog.owner_id == actor["owner_id"],
+            QueryLog.created_at >= func.now() - timedelta(hours=24),
+        )
+    ).scalar()
+
+    if used >= limits.USER_DAILY_QUERIES:
+        raise HTTPException(
+            status_code=429,
+            detail="Daily limit reached ("
+            + str(limits.USER_DAILY_QUERIES)
+            + " questions in 24 hours). Please try again later.",
+        )
+
+
+# Limits step: count one answered question for the owner, and write it to the log
+def log_query(actor, db, mode, seconds):
+    if actor["kind"] == "guest":
+        get_guest(actor["owner_id"])["queries"] = (
+            get_guest(actor["owner_id"])["queries"] + 1
+        )
+
+    try:
+        db.add(
+            QueryLog(owner_id=actor["owner_id"], mode=mode, seconds=round(seconds, 2))
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 # API step: receive a PDF from a guest or a user, process it and store its chunks
 @app.post("/upload")
 def upload_pdf(
@@ -85,7 +141,19 @@ def upload_pdf(
 
     owner_id = actor["owner_id"]
     is_guest = actor["kind"] == "guest"
-    content = file.file.read()
+
+    # Limits step: read one byte more than the limit, so a too large file is stopped early
+    max_bytes = max_file_mb(is_guest) * 1024 * 1024
+    content = file.file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=file.filename
+            + " is larger than the limit of "
+            + str(max_file_mb(is_guest))
+            + " MB",
+        )
+
     file_hash = hashlib.sha256(content).hexdigest()
 
     # Do not process the same file twice for the same owner
@@ -94,6 +162,14 @@ def upload_pdf(
         for doc in guest["documents"]:
             if doc["file_hash"] == file_hash:
                 return duplicate_response(doc["doc_id"], doc["filename"])
+
+        if len(guest["documents"]) >= limits.GUEST_MAX_PDFS:
+            raise HTTPException(
+                status_code=403,
+                detail="Guest limit reached ("
+                + str(limits.GUEST_MAX_PDFS)
+                + " PDFs). Create an account to add more.",
+            )
     else:
         existing = db.execute(
             select(Document).where(
@@ -102,6 +178,17 @@ def upload_pdf(
         ).scalar_one_or_none()
         if existing is not None:
             return duplicate_response(existing.doc_id, existing.filename)
+
+        count = db.execute(
+            select(func.count(Document.id)).where(Document.user_id == actor["user"].id)
+        ).scalar()
+        if count >= limits.USER_MAX_PDFS:
+            raise HTTPException(
+                status_code=403,
+                detail="You have reached the limit of "
+                + str(limits.USER_MAX_PDFS)
+                + " PDFs. Delete one to add another.",
+            )
 
     doc_id = "doc_" + uuid.uuid4().hex[:8]
     save_path = os.path.join(UPLOAD_FOLDER, doc_id + ".pdf")
@@ -287,6 +374,8 @@ def chat(
     if message_text == "":
         raise HTTPException(status_code=400, detail="Write a message")
 
+    check_query_limit(actor, db)
+
     is_user = actor["kind"] == "user"
     chat_session = None
 
@@ -295,12 +384,16 @@ def chat(
         if chat_session is None or chat_session.user_id != actor["user"].id:
             raise HTTPException(status_code=404, detail="Chat not found")
 
+    started = time.time()
+
     try:
         data = route_message(actor["owner_id"], message_text)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     except Exception as error:
         raise HTTPException(status_code=502, detail="LLM error: " + str(error))
+
+    seconds = time.time() - started
 
     assistant = make_assistant_message(data)
     data["assistant"] = assistant
@@ -334,5 +427,7 @@ def chat(
             data["chat_id"] = chat_session.id
         except Exception:
             db.rollback()
+
+    log_query(actor, db, data["mode"], seconds)
 
     return data

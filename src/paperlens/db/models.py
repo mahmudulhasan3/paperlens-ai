@@ -80,3 +80,14 @@ class UserProfile(Base):
     avatar: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     avatar_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+# Database step: one row for every answered question (used for the daily limit and for usage statistics)
+class QueryLog(Base):
+    __tablename__ = "query_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(50), index=True)
+    mode: Mapped[str] = mapped_column(String(20))
+    seconds: Mapped[float] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
