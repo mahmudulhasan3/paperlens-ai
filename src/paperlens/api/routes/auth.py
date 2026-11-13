@@ -85,3 +85,21 @@ def start_guest():
     register_guest(guest_id)
 
     return {"access_token": token, "token_type": "bearer", "is_guest": True}
+
+
+# Auth step: the request body for checking an email
+class CheckEmailRequest(BaseModel):
+    email: str
+
+
+# Auth step: tell the UI if an email already has an account (then it asks for the password, or asks to create one)
+@router.post("/check-email")
+def check_email(body: CheckEmailRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+
+    existing = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+
+    return {"exists": existing is not None}
