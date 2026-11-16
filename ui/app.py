@@ -34,7 +34,7 @@ DARK_VARS = "--bg: #212121; --bg2: #171717; --text: #ececec; --muted: #a1a1aa; -
 BASE_RULES = """
 #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none !important;}
 .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stBottom"], [data-testid="stBottom"] > div {background: var(--bg) !important;}
-.block-container {max-width: 760px; padding-top: 1rem; padding-bottom: 7rem;}
+.block-container {max-width: 760px; padding-top: 5rem; padding-bottom: 7rem;}
 section[data-testid="stSidebar"], section[data-testid="stSidebar"] > div {background: var(--bg2) !important;}
 .stApp, .stApp p, .stApp span, .stApp label, .stApp li, .stApp h1, .stApp h2, .stApp h3, .stApp h4, [data-testid="stMarkdownContainer"] {color: var(--text) !important;}
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {color: var(--muted) !important;}
@@ -52,14 +52,23 @@ section[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] {backgro
 section[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]:hover {background: var(--hover) !important;}
 section[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] p {text-align: left !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
 
-[data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="textarea"], [data-baseweb="select"] > div {background: var(--bg2) !important; border-color: var(--border) !important; border-radius: 12px !important;}
-input, textarea {color: var(--text) !important; -webkit-text-fill-color: var(--text) !important;}
+[data-testid="stTextInputRootElement"], [data-testid="stTextAreaRootElement"], [data-testid="stNumberInputContainer"], [data-testid="stSelectbox"] [data-baseweb="select"] > div, [data-baseweb="input"], [data-baseweb="textarea"] {background: var(--bg2) !important; border: 1px solid var(--border) !important; border-radius: 12px !important;}
+[data-baseweb="base-input"], [data-testid="stTextInputRootElement"] > div, [data-testid="stTextAreaRootElement"] > div {background: transparent !important;}
+input, textarea {color: var(--text) !important; -webkit-text-fill-color: var(--text) !important; background: transparent !important;}
+input:disabled, textarea:disabled {-webkit-text-fill-color: var(--muted) !important; color: var(--muted) !important; opacity: 1 !important;}
+[data-testid="stSelectbox"] *, [data-baseweb="select"] * {color: var(--text) !important;}
+[data-testid="stSelectbox"] svg {fill: var(--text) !important;}
+[data-testid="stSelectbox"] div:has(> input) {background: var(--bg2) !important; border: 1px solid var(--border) !important; border-radius: 12px !important;}
+[data-testid="stSelectbox"] input {color: var(--text) !important; -webkit-text-fill-color: var(--text) !important;}
+[data-baseweb="popover"], [data-baseweb="popover"] > div, [data-baseweb="menu"], [data-baseweb="menu"] ul, [role="listbox"] {background: var(--bg2) !important; color: var(--text) !important;}
+[data-baseweb="popover"] li, [data-baseweb="menu"] li, [role="option"] {background: var(--bg2) !important; color: var(--text) !important;}
+[data-baseweb="popover"] li:hover, [role="option"]:hover, [role="option"][aria-selected="true"] {background: var(--hover) !important;}
 input::placeholder, textarea::placeholder {color: var(--muted) !important; -webkit-text-fill-color: var(--muted) !important;}
 [data-testid="stFileUploaderDropzone"] {background: var(--bg2) !important; border-color: var(--border) !important;}
 [data-testid="stForm"] {border: none !important; padding: 0 !important;}
 
 [data-testid="stChatInput"] {background: var(--bg2) !important; border: 1px solid var(--border) !important; border-radius: 28px !important;}
-[data-testid="stChatInput"] > div, [data-testid="stChatInput"] textarea {background: transparent !important;}
+[data-testid="stChatInput"] > div, [data-testid="stChatInput"] textarea {background: transparent !important; border: none !important; box-shadow: none !important;}
 [data-testid="stChatInput"] button {background: transparent !important; border: none !important;}
 [data-testid="stChatInput"] svg {fill: var(--text) !important; color: var(--text) !important;}
 
