@@ -431,3 +431,46 @@ def chat(
     log_query(actor, db, data["mode"], seconds)
 
     return data
+
+
+# API step: delete one document of the owner, with its chunks (and the saved PDF file of a registered user)
+@app.delete("/documents/{doc_id}")
+def delete_document(
+    doc_id: str, actor: dict = Depends(get_actor), db: Session = Depends(get_db)
+):
+    owner_id = actor["owner_id"]
+
+    if actor["kind"] == "guest":
+        guest = get_guest(owner_id)
+        found = None
+        for doc in guest["documents"]:
+            if doc["doc_id"] == doc_id:
+                found = doc
+
+        if found is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        guest["documents"].remove(found)
+    else:
+        document = db.execute(
+            select(Document).where(
+                Document.doc_id == doc_id, Document.user_id == actor["user"].id
+            )
+        ).scalar_one_or_none()
+
+        if document is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        db.delete(document)
+        db.commit()
+
+        pdf_path = os.path.join(UPLOAD_FOLDER, doc_id + ".pdf")
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
+
+    get_collection().delete(
+        where={"$and": [{"owner_id": owner_id}, {"doc_id": doc_id}]}
+    )
+    state["indexes"].pop(owner_id, None)
+
+    return {"deleted": doc_id}

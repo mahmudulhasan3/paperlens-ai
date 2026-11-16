@@ -673,7 +673,12 @@ with st.sidebar:
     if len(documents) == 0:
         st.caption("None yet. Use the + in the message box to add PDFs.")
     for doc in documents:
-        st.caption("• " + doc["filename"])
+        col_name, col_remove = st.columns([5, 1])
+        col_name.caption("• " + doc["filename"])
+
+        if col_remove.button("✕", key="remove_doc_" + doc["doc_id"]):
+            call_api("DELETE", "/documents/" + doc["doc_id"])
+            st.rerun()
 
     with st.container(key="account_box"):
         if st.session_state["is_guest"]:
