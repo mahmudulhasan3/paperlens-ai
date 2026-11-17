@@ -27,12 +27,24 @@ from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
 from paperlens.modes.extract import extract_from_document
 from paperlens.modes.router import route_message
+from fastapi.middleware.cors import CORSMiddleware
+
 
 app = FastAPI(title="PaperLens-AI")
 
 # Database step: create the tables on startup if they do not exist yet
 Base.metadata.create_all(engine)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # Guest step: guest data lives only until the application restarts
 purge_all_guest_data()
 

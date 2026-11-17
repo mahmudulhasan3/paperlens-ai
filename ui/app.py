@@ -109,6 +109,8 @@ DEFAULTS = {
     "auth_email": "",
     "view": "chat",
     "menu_open": False,
+    "welcome": None,
+    "otp_hint": "",
 }
 for key in DEFAULTS:
     if key not in st.session_state:
@@ -230,6 +232,8 @@ def clear_session():
     st.session_state["auth_email"] = ""
     st.session_state["view"] = "chat"
     st.session_state["menu_open"] = False
+    st.session_state["welcome"] = None
+    st.session_state["otp_hint"] = ""
 
 
 # UI helper: start a guest session automatically, so the chat is open at once
@@ -423,16 +427,42 @@ def open_login():
     st.rerun()
 
 
+# UI helper: a short error text from the server answer
+def error_text(response):
+    try:
+        return str(response.json()["detail"])
+    except Exception:
+        return "Something went wrong (code " + str(response.status_code) + ")."
+
+
 # UI helper: finish a login, the guest session is replaced by the account
-def finish_login(token, email):
+def finish_login(token, email, first_login):
     clear_session()
     st.session_state["token"] = token
     st.session_state["email"] = email
     st.session_state["is_guest"] = False
+    st.session_state["welcome"] = "first" if first_login else "back"
     st.rerun()
 
 
-# UI page: log in or sign up, step 1 email, step 2 password (or a new password for a new account)
+# UI helper: login part 1, check the password and ask the server to send the code
+def start_login(email, password):
+    with st.spinner("Sending the code..."):
+        response = requests.post(
+            API_URL + "/auth/login/start",
+            json={"email": email, "password": password},
+            timeout=60,
+        )
+
+    if response.status_code == 200:
+        st.session_state["otp_hint"] = response.json()["email_hint"]
+        st.session_state["auth_step"] = "otp"
+        st.rerun()
+
+    st.error(error_text(response))
+
+
+# UI page: log in or sign up, email, password, code from the email, create account, forgot password
 def show_login_page():
     left, middle, right = st.columns([1, 4, 1])
 
@@ -444,6 +474,7 @@ def show_login_page():
             '<div class="page-title">Log in or sign up</div>', unsafe_allow_html=True
         )
         step = st.session_state["auth_step"]
+        email = st.session_state["auth_email"]
 
         if step == "email":
             st.caption(
@@ -451,62 +482,85 @@ def show_login_page():
             )
 
             with st.form("auth_email_form"):
-                email = st.text_input("Email address", placeholder="Email address")
+                typed_email = st.text_input(
+                    "Email address", placeholder="Email address"
+                )
                 submitted = st.form_submit_button("Continue", type="primary")
 
             if submitted:
                 response = requests.post(
-                    API_URL + "/auth/check-email", json={"email": email}
+                    API_URL + "/auth/check-email", json={"email": typed_email}
                 )
 
                 if response.status_code != 200:
-                    st.error(str(response.json()["detail"]))
+                    st.error(error_text(response))
                 else:
-                    st.session_state["auth_email"] = email.strip().lower()
-                    if response.json()["exists"]:
-                        st.session_state["auth_step"] = "password"
-                    else:
-                        st.session_state["auth_step"] = "create"
+                    st.session_state["auth_email"] = typed_email.strip().lower()
+                    st.session_state["auth_step"] = (
+                        "password" if response.json()["exists"] else "create"
+                    )
                     st.rerun()
 
         elif step == "password":
             st.markdown(
-                "Welcome back. Enter the password for **"
-                + html.escape(st.session_state["auth_email"])
-                + "**."
+                "Welcome back. Enter the password for **" + html.escape(email) + "**."
             )
 
             with st.form("auth_password_form"):
                 password = st.text_input(
                     "Password", type="password", placeholder="Password"
                 )
-                submitted = st.form_submit_button("Log in", type="primary")
+                submitted = st.form_submit_button("Continue", type="primary")
 
             if submitted:
-                response = requests.post(
-                    API_URL + "/auth/login",
-                    data={
-                        "username": st.session_state["auth_email"],
-                        "password": password,
-                    },
-                )
+                start_login(email, password)
 
-                if response.status_code == 200:
-                    finish_login(
-                        response.json()["access_token"], st.session_state["auth_email"]
-                    )
-                else:
-                    st.error(str(response.json()["detail"]))
+            if st.button("Forgot password?", key="forgot_link"):
+                st.session_state["auth_step"] = "forgot"
+                st.rerun()
 
             if st.button("Use a different email", key="login_other_email"):
                 st.session_state["auth_step"] = "email"
                 st.rerun()
 
-        else:
+        elif step == "otp":
+            st.markdown(
+                "We sent a 6-digit code to **"
+                + html.escape(st.session_state["otp_hint"])
+                + "**."
+            )
+            st.caption(
+                "Enter it to finish logging in. The code works for 10 minutes. Check the spam folder too."
+            )
+
+            with st.form("auth_otp_form"):
+                code = st.text_input("6-digit code", max_chars=6, placeholder="123456")
+                submitted = st.form_submit_button("Verify and log in", type="primary")
+
+            if submitted:
+                response = requests.post(
+                    API_URL + "/auth/login/verify",
+                    json={"email": email, "code": code.strip()},
+                    timeout=60,
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    finish_login(data["access_token"], email, data["first_login"])
+                else:
+                    st.error(error_text(response))
+
+            if st.button("Send a new code", key="otp_resend"):
+                st.session_state["auth_step"] = "password"
+                st.rerun()
+            st.caption("To get a new code, enter your password again.")
+
+        elif step == "create":
             st.markdown(
                 "There is no account for **"
-                + html.escape(st.session_state["auth_email"])
-                + "** yet. Choose a password to create one."
+                + html.escape(email)
+                + "** yet. Choose a password to create one. "
+                "We will send a code to this email to confirm that it is yours."
             )
 
             with st.form("auth_create_form"):
@@ -520,32 +574,102 @@ def show_login_page():
             if submitted:
                 response = requests.post(
                     API_URL + "/auth/register",
-                    json={
-                        "email": st.session_state["auth_email"],
-                        "password": password,
-                    },
+                    json={"email": email, "password": password},
                 )
 
                 if response.status_code != 201:
-                    st.error(str(response.json()["detail"]))
+                    st.error(error_text(response))
                 else:
-                    login = requests.post(
-                        API_URL + "/auth/login",
-                        data={
-                            "username": st.session_state["auth_email"],
-                            "password": password,
-                        },
-                    )
-                    if login.status_code == 200:
-                        finish_login(
-                            login.json()["access_token"], st.session_state["auth_email"]
-                        )
-                    else:
-                        st.error("The account was created. Please log in.")
+                    start_login(email, password)
 
             if st.button("Use a different email", key="create_other_email"):
                 st.session_state["auth_step"] = "email"
                 st.rerun()
+
+        elif step == "forgot":
+            st.markdown(
+                "Enter your email. We will send a link to choose a new password."
+            )
+
+            with st.form("auth_forgot_form"):
+                typed_email = st.text_input(
+                    "Email address", value=email, placeholder="Email address"
+                )
+                submitted = st.form_submit_button("Send reset link", type="primary")
+
+            if submitted:
+                with st.spinner("Sending..."):
+                    response = requests.post(
+                        API_URL + "/auth/forgot-password",
+                        json={"email": typed_email},
+                        timeout=60,
+                    )
+
+                if response.status_code == 200:
+                    st.session_state["auth_email"] = typed_email.strip().lower()
+                    st.session_state["auth_step"] = "forgot_sent"
+                    st.rerun()
+                else:
+                    st.error(error_text(response))
+
+            if st.button("Back to log in", key="forgot_back"):
+                st.session_state["auth_step"] = "email"
+                st.rerun()
+
+        else:
+            st.success(
+                "If an account exists for "
+                + email
+                + ", we sent a link to choose a new password."
+            )
+            st.caption("The link works for 30 minutes. Check the spam folder too.")
+
+            if st.button("Back to log in", key="forgot_sent_back"):
+                st.session_state["auth_step"] = "email"
+                st.rerun()
+
+
+# UI page: choose a new password after the link in the reset email was opened
+def show_reset_page(token):
+    left, middle, right = st.columns([1, 4, 1])
+
+    with middle:
+        st.markdown(
+            '<div class="page-title">Choose a new password</div>',
+            unsafe_allow_html=True,
+        )
+
+        with st.form("reset_form"):
+            new_password = st.text_input(
+                "New password (at least 8 characters)", type="password"
+            )
+            repeat = st.text_input("Repeat the new password", type="password")
+            submitted = st.form_submit_button("Change password", type="primary")
+
+        if submitted:
+            if new_password != repeat:
+                st.error("The two passwords are not the same.")
+            else:
+                response = requests.post(
+                    API_URL + "/auth/reset-password",
+                    json={"token": token, "new_password": new_password},
+                    timeout=60,
+                )
+
+                if response.status_code == 200:
+                    st.query_params.clear()
+                    st.session_state["auth_step"] = "email"
+                    st.session_state["view"] = "login"
+                    st.session_state["notice"] = (
+                        "Your password was changed. Please log in."
+                    )
+                    st.rerun()
+                else:
+                    st.error(error_text(response))
+
+        if st.button("Back to chat", key="reset_back"):
+            st.query_params.clear()
+            st.rerun()
 
 
 # UI page: the settings of a registered user (photo, name, about text, email and appearance)
@@ -626,6 +750,17 @@ else:
     account_name = st.session_state["profile"]["name"]
     account_email = st.session_state["profile"]["email"]
     account_avatar = st.session_state["profile"]["avatar"]
+
+if st.session_state["welcome"] is not None and not st.session_state["is_guest"]:
+    who = st.session_state["profile"]["name"]
+    if st.session_state["welcome"] == "first":
+        st.toast(
+            "Welcome to PaperLens-AI, " + who + "! We also sent you a welcome email.",
+            icon="🎉",
+        )
+    else:
+        st.toast("Welcome back, " + who + "!", icon="👋")
+    st.session_state["welcome"] = None
 
 st.markdown(theme_css(st.session_state["theme"]), unsafe_allow_html=True)
 if not st.session_state["is_guest"]:
@@ -714,6 +849,11 @@ with st.sidebar:
 if st.session_state["notice"] is not None:
     st.info(st.session_state["notice"])
     st.session_state["notice"] = None
+
+reset_token = st.query_params.get("reset_token", "")
+if reset_token != "" and st.session_state["is_guest"]:
+    show_reset_page(reset_token)
+    st.stop()
 
 # UI step 4: the login page and the settings page replace the chat page while they are open
 if st.session_state["view"] == "login" and st.session_state["is_guest"]:

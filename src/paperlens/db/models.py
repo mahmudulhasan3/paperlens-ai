@@ -91,3 +91,29 @@ class QueryLog(Base):
     mode: Mapped[str] = mapped_column(String(20))
     seconds: Mapped[float] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), index=True)
+
+
+# Database step: one-time codes (login codes and password reset tokens), only the hash is stored
+class AuthCode(Base):
+    __tablename__ = "auth_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    purpose: Mapped[str] = mapped_column(String(20))
+    code_hash: Mapped[str] = mapped_column(String(64), index=True)
+    expires_at: Mapped[datetime] = mapped_column()
+    attempts: Mapped[int] = mapped_column(default=0)
+    used: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+# Database step: small flags of a user, for example if the welcome email was already sent
+class UserFlag(Base):
+    __tablename__ = "user_flags"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    welcomed: Mapped[bool] = mapped_column(default=False)

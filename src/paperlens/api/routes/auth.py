@@ -1,28 +1,99 @@
+import os
+
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from paperlens.auth.guests import register_guest, purge_expired_guests
+from paperlens.auth import codes
 from paperlens.auth.dependencies import get_current_user
-from paperlens.auth.security import (
-    hash_password,
-    verify_password,
-    create_access_token,
-    create_guest_token,
-)
+from paperlens.auth.email_templates import otp_email, reset_email, welcome_email
+from paperlens.auth.emailer import send_email
+from paperlens.auth.guests import register_guest, purge_expired_guests
+from paperlens.auth.security import hash_password, verify_password, create_access_token, create_guest_token
 from paperlens.db.database import get_db
-from paperlens.db.models import User
+from paperlens.db.models import User, UserProfile, UserFlag
+
+load_dotenv()
+
+APP_URL = os.getenv("APP_URL", "http://localhost:8501").rstrip("/")
+FORGOT_MESSAGE = "If an account exists for this email, we sent a link to choose a new password."
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Auth step: a fake hash, so a wrong email takes as long as a wrong password
+DUMMY_HASH = hash_password("a-password-that-nobody-uses")
 
-# Auth step: the request body for registration
+
+# Auth step: request bodies
 class RegisterRequest(BaseModel):
     email: str
     password: str
+
+
+class CheckEmailRequest(BaseModel):
+    email: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class VerifyEmailRequest(BaseModel):
+    email: str
+    code: str
+
+
+class ForgotRequest(BaseModel):
+    email: str
+
+
+class ResetRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+# Auth step: find a user by email
+def find_user(db, email):
+    return db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+
+
+# Auth step: show only the first letter of an email, like j***@gmail.com
+def mask_email(email):
+    name, domain = email.split("@", 1)
+    return name[:1] + "***@" + domain
+
+
+# Auth step: the name used in emails, the profile name or the first part of the email
+def name_of(db, user):
+    profile = db.get(UserProfile, user.id)
+
+    if profile is not None and profile.display_name != "":
+        return profile.display_name
+
+    return user.email.split("@")[0]
+
+
+# Auth step: a user is verified when the flag row exists and says so (the email was confirmed once)
+def is_verified(db, user):
+    flag = db.get(UserFlag, user.id)
+
+    return flag is not None and flag.welcomed
+
+
+# Auth step: remember that the email of this user was confirmed
+def mark_verified(db, user):
+    flag = db.get(UserFlag, user.id)
+
+    if flag is None:
+        db.add(UserFlag(user_id=user.id, welcomed=True))
+    else:
+        flag.welcomed = True
+
+    db.commit()
 
 
 # Auth step: create a new account with a hashed password
@@ -33,12 +104,9 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     if "@" not in email or "." not in email.split("@")[-1]:
         raise HTTPException(status_code=400, detail="Enter a valid email address")
     if len(body.password) < 8:
-        raise HTTPException(
-            status_code=400, detail="The password must have at least 8 characters"
-        )
+        raise HTTPException(status_code=400, detail="The password must have at least 8 characters")
 
-    existing = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-    if existing is not None:
+    if find_user(db, email) is not None:
         raise HTTPException(status_code=409, detail="This email is already registered")
 
     user = User(email=email, password_hash=hash_password(body.password))
@@ -54,20 +122,117 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     return {"id": user.id, "email": user.email}
 
 
-# Auth step: check email and password, then give the user a token
-@router.post("/login")
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    email = form.username.strip().lower()
-    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+# Auth step: tell the UI if an email already has an account
+@router.post("/check-email")
+def check_email(body: CheckEmailRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
 
-    if user is None or not verify_password(form.password, user.password_hash):
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+
+    return {"exists": find_user(db, email) is not None}
+
+
+# Auth step: login with email and password; a code is needed only once, to confirm the email
+@router.post("/login")
+def login(body: LoginRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+
+    if codes.is_locked(email):
         raise HTTPException(
-            status_code=401,
-            detail="Wrong email or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=429,
+            detail="Too many wrong attempts. Please try again in " + str(codes.LOCK_MINUTES) + " minutes.",
         )
 
-    return {"access_token": create_access_token(user.id), "token_type": "bearer"}
+    user = find_user(db, email)
+
+    if user is None:
+        verify_password(body.password, DUMMY_HASH)
+        codes.record_failure(email)
+        raise HTTPException(status_code=401, detail="Wrong email or password")
+
+    if not verify_password(body.password, user.password_hash):
+        codes.record_failure(email)
+        raise HTTPException(status_code=401, detail="Wrong email or password")
+
+    codes.clear_failures(email)
+
+    # A confirmed email logs in at once
+    if is_verified(db, user):
+        return {"otp_required": False, "access_token": create_access_token(user.id), "token_type": "bearer"}
+
+    # An email that was never confirmed gets a 6 digit code
+    if not codes.can_send(db, user.id, "login_otp"):
+        raise HTTPException(
+            status_code=429,
+            detail="A code was sent a moment ago. Please wait a minute before you ask for a new one.",
+        )
+
+    code = codes.make_otp()
+    codes.create_code(db, user.id, "login_otp", code, codes.OTP_MINUTES)
+
+    subject, content = otp_email(code, codes.OTP_MINUTES)
+    if not send_email(user.email, subject, content):
+        raise HTTPException(status_code=502, detail="We could not send the email. Please try again.")
+
+    return {"otp_required": True, "email_hint": mask_email(user.email), "minutes": codes.OTP_MINUTES}
+
+
+# Auth step: confirm the email with the code, then log in and send the welcome email
+@router.post("/verify-email")
+def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    user = find_user(db, email)
+
+    if user is None or not codes.verify_otp(db, user.id, body.code):
+        raise HTTPException(status_code=401, detail="The code is wrong or has expired")
+
+    already_verified = is_verified(db, user)
+    mark_verified(db, user)
+
+    if not already_verified:
+        subject, content = welcome_email(name_of(db, user), APP_URL)
+        send_email(user.email, subject, content)
+
+    return {"access_token": create_access_token(user.id), "token_type": "bearer", "first_login": not already_verified}
+
+
+# Auth step: forgot password. It always gives the same answer, so nobody can find out which emails exist
+@router.post("/forgot-password")
+def forgot_password(body: ForgotRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    user = find_user(db, email)
+
+    if user is not None and codes.can_send(db, user.id, "password_reset"):
+        token = codes.make_reset_token()
+        codes.create_code(db, user.id, "password_reset", token, codes.RESET_MINUTES)
+
+        subject, content = reset_email(APP_URL + "/?reset_token=" + token, codes.RESET_MINUTES)
+        send_email(user.email, subject, content)
+
+    return {"message": FORGOT_MESSAGE}
+
+
+# Auth step: choose a new password with the token from the reset link, and save it in the database
+@router.post("/reset-password")
+def reset_password(body: ResetRequest, db: Session = Depends(get_db)):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="The password must have at least 8 characters")
+
+    row = codes.find_reset_code(db, body.token.strip())
+    if row is None:
+        raise HTTPException(status_code=400, detail="This reset link is not valid or has expired")
+
+    user = db.get(User, row.user_id)
+    user.password_hash = hash_password(body.new_password)
+    codes.cancel_all_codes(db, user.id)
+    db.commit()
+
+    # Opening the link from the email also proves that the email is the user's own
+    mark_verified(db, user)
+    codes.clear_failures(user.email)
+
+    return {"message": "Your password was changed. You can log in now."}
 
 
 # Auth step: return the logged-in user (a protected endpoint, used to test the doorkeeper)
@@ -85,21 +250,3 @@ def start_guest():
     register_guest(guest_id)
 
     return {"access_token": token, "token_type": "bearer", "is_guest": True}
-
-
-# Auth step: the request body for checking an email
-class CheckEmailRequest(BaseModel):
-    email: str
-
-
-# Auth step: tell the UI if an email already has an account (then it asks for the password, or asks to create one)
-@router.post("/check-email")
-def check_email(body: CheckEmailRequest, db: Session = Depends(get_db)):
-    email = body.email.strip().lower()
-
-    if "@" not in email or "." not in email.split("@")[-1]:
-        raise HTTPException(status_code=400, detail="Enter a valid email address")
-
-    existing = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-
-    return {"exists": existing is not None}
