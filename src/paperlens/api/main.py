@@ -4,9 +4,10 @@ import time
 import uuid
 from datetime import timedelta
 
+import pymupdf
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from paperlens import limits
@@ -19,7 +20,11 @@ from paperlens.auth.guests import get_guest, purge_all_guest_data
 from paperlens.db.database import Base, engine, get_db
 from paperlens.db.models import Document, ChatSession, ChatMessage, QueryLog
 from paperlens.ingestion.pipeline import ingest_pdf
-from paperlens.indexing.vector_store import add_chunks, count_chunks, get_collection
+from paperlens.indexing.vector_store import (
+    add_chunks,
+    count_chunks,
+    delete_document_chunks,
+)
 from paperlens.indexing.bm25_index import build_bm25_index
 from paperlens.retrieval.hybrid import hybrid_search
 from paperlens.generation.answer import answer_baseline
@@ -27,24 +32,18 @@ from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
 from paperlens.modes.extract import extract_from_document
 from paperlens.modes.router import route_message
-from fastapi.middleware.cors import CORSMiddleware
-
 
 app = FastAPI(title="PaperLens-AI")
 
-# Database step: create the tables on startup if they do not exist yet
+# Database step: switch on the vector extension, then create the tables if they do not exist yet
+try:
+    with engine.begin() as connection:
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+except Exception as error:
+    print("Could not switch on the vector extension:", error)
+
 Base.metadata.create_all(engine)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5500",
-        "http://localhost:5500",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 # Guest step: guest data lives only until the application restarts
 purge_all_guest_data()
 
@@ -55,7 +54,7 @@ app.include_router(profile_router)
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# API state: one keyword index per owner, rebuilt after that owner uploads a new PDF
+# API state: one keyword index per owner, rebuilt after that owner uploads or deletes a PDF
 state = {"indexes": {}}
 
 
@@ -96,6 +95,14 @@ def max_file_mb(is_guest):
     return limits.USER_MAX_FILE_MB
 
 
+# Limits step: the largest number of pages for a guest or a registered user
+def max_pages(is_guest):
+    if is_guest:
+        return limits.GUEST_MAX_PAGES
+
+    return limits.USER_MAX_PAGES
+
+
 # Limits step: stop with 429 when the owner has used all the questions that are allowed
 def check_query_limit(actor, db):
     if actor["kind"] == "guest":
@@ -128,9 +135,8 @@ def check_query_limit(actor, db):
 # Limits step: count one answered question for the owner, and write it to the log
 def log_query(actor, db, mode, seconds):
     if actor["kind"] == "guest":
-        get_guest(actor["owner_id"])["queries"] = (
-            get_guest(actor["owner_id"])["queries"] + 1
-        )
+        guest = get_guest(actor["owner_id"])
+        guest["queries"] = guest["queries"] + 1
 
     try:
         db.add(
@@ -139,6 +145,17 @@ def log_query(actor, db, mode, seconds):
         db.commit()
     except Exception:
         db.rollback()
+
+
+# API step: a simple check for the hosting service, it also tests the database connection
+@app.get("/health")
+def health(db: Session = Depends(get_db)):
+    try:
+        db.execute(select(1))
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database is not reachable")
+
+    return {"status": "ok"}
 
 
 # API step: receive a PDF from a guest or a user, process it and store its chunks
@@ -167,6 +184,26 @@ def upload_pdf(
         )
 
     file_hash = hashlib.sha256(content).hexdigest()
+
+    # Limits step: count the pages, this also shows early if the file is not a real PDF
+    try:
+        pdf = pymupdf.open(stream=content, filetype="pdf")
+        page_count = len(pdf)
+        pdf.close()
+    except Exception:
+        raise HTTPException(
+            status_code=400, detail=file.filename + " is not a valid PDF file"
+        )
+
+    if page_count > max_pages(is_guest):
+        raise HTTPException(
+            status_code=413,
+            detail=file.filename
+            + " has "
+            + str(page_count)
+            + " pages, the limit is "
+            + str(max_pages(is_guest)),
+        )
 
     # Do not process the same file twice for the same owner
     if is_guest:
@@ -250,7 +287,7 @@ def upload_pdf(
         db.commit()
     except Exception:
         db.rollback()
-        get_collection().delete(where={"doc_id": doc_id})
+        delete_document_chunks(owner_id, doc_id)
         os.remove(save_path)
         raise HTTPException(status_code=500, detail="Could not save the document")
 
@@ -294,6 +331,47 @@ def documents(actor: dict = Depends(get_actor), db: Session = Depends(get_db)):
         )
 
     return {"documents": result}
+
+
+# API step: delete one document of the owner, with its chunks (and the saved PDF file of a registered user)
+@app.delete("/documents/{doc_id}")
+def delete_document(
+    doc_id: str, actor: dict = Depends(get_actor), db: Session = Depends(get_db)
+):
+    owner_id = actor["owner_id"]
+
+    if actor["kind"] == "guest":
+        guest = get_guest(owner_id)
+        found = None
+        for doc in guest["documents"]:
+            if doc["doc_id"] == doc_id:
+                found = doc
+
+        if found is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        guest["documents"].remove(found)
+    else:
+        document = db.execute(
+            select(Document).where(
+                Document.doc_id == doc_id, Document.user_id == actor["user"].id
+            )
+        ).scalar_one_or_none()
+
+        if document is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        db.delete(document)
+        db.commit()
+
+        pdf_path = os.path.join(UPLOAD_FOLDER, doc_id + ".pdf")
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
+
+    delete_document_chunks(owner_id, doc_id)
+    state["indexes"].pop(owner_id, None)
+
+    return {"deleted": doc_id}
 
 
 # API step: return the best evidence chunks from the owner's own documents
@@ -443,46 +521,3 @@ def chat(
     log_query(actor, db, data["mode"], seconds)
 
     return data
-
-
-# API step: delete one document of the owner, with its chunks (and the saved PDF file of a registered user)
-@app.delete("/documents/{doc_id}")
-def delete_document(
-    doc_id: str, actor: dict = Depends(get_actor), db: Session = Depends(get_db)
-):
-    owner_id = actor["owner_id"]
-
-    if actor["kind"] == "guest":
-        guest = get_guest(owner_id)
-        found = None
-        for doc in guest["documents"]:
-            if doc["doc_id"] == doc_id:
-                found = doc
-
-        if found is None:
-            raise HTTPException(status_code=404, detail="Document not found")
-
-        guest["documents"].remove(found)
-    else:
-        document = db.execute(
-            select(Document).where(
-                Document.doc_id == doc_id, Document.user_id == actor["user"].id
-            )
-        ).scalar_one_or_none()
-
-        if document is None:
-            raise HTTPException(status_code=404, detail="Document not found")
-
-        db.delete(document)
-        db.commit()
-
-        pdf_path = os.path.join(UPLOAD_FOLDER, doc_id + ".pdf")
-        if os.path.exists(pdf_path):
-            os.remove(pdf_path)
-
-    get_collection().delete(
-        where={"$and": [{"owner_id": owner_id}, {"doc_id": doc_id}]}
-    )
-    state["indexes"].pop(owner_id, None)
-
-    return {"deleted": doc_id}

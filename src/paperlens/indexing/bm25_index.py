@@ -1,6 +1,6 @@
 from rank_bm25 import BM25Okapi
 
-from paperlens.indexing.vector_store import get_collection
+from paperlens.indexing.vector_store import get_owner_chunks
 
 
 # Phase 3 (BM25): turn text into lowercase words, with punctuation removed
@@ -19,13 +19,10 @@ def tokenize(text):
 
 # Phase 3 (BM25): build a keyword index from the chunks of one owner only
 def build_bm25_index(owner_id):
-    data = get_collection().get(
-        where={"owner_id": owner_id},
-        include=["documents", "metadatas"],
-    )
+    data = get_owner_chunks(owner_id)
 
     tokenized_docs = []
-    for text in data["documents"]: #type: ignore
+    for text in data["documents"]:
         tokenized_docs.append(tokenize(text))
 
     return {

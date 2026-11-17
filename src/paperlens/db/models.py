@@ -10,7 +10,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
-
+from pgvector.sqlalchemy import Vector
 from paperlens.db.database import Base
 
 
@@ -117,3 +117,21 @@ class UserFlag(Base):
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     welcomed: Mapped[bool] = mapped_column(default=False)
+
+
+# Database step: one chunk of a PDF with its embedding (the vector is used for the search by meaning)
+class Chunk(Base):
+    __tablename__ = "chunks"
+
+    chunk_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    doc_id: Mapped[str] = mapped_column(String(50), index=True)
+    owner_id: Mapped[str] = mapped_column(String(60), index=True)
+    file_hash: Mapped[str] = mapped_column(String(64))
+    filename: Mapped[str] = mapped_column(String(255))
+    chunk_index: Mapped[int] = mapped_column()
+    section: Mapped[str] = mapped_column(Text)
+    page_start: Mapped[int] = mapped_column()
+    page_end: Mapped[int] = mapped_column()
+    word_count: Mapped[int] = mapped_column()
+    text: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector(384))

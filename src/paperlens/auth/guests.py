@@ -1,6 +1,6 @@
 import time
 
-from paperlens.indexing.vector_store import get_collection
+from paperlens.indexing.vector_store import delete_owner_chunks, delete_guest_chunks
 
 GUEST_TTL_SECONDS = 2 * 60 * 60
 
@@ -23,7 +23,7 @@ def get_guest(guest_id):
 
 # Guest step: delete everything that belongs to one guest
 def delete_guest_data(guest_id):
-    get_collection().delete(where={"owner_id": guest_id})
+    delete_owner_chunks(guest_id)
     guests.pop(guest_id, None)
 
 
@@ -42,15 +42,5 @@ def purge_expired_guests():
 
 # Guest step: on startup, delete all guest chunks left from before the restart
 def purge_all_guest_data():
-    data = get_collection().get(include=["metadatas"])
-    owners = []
-
-    for meta in data["metadatas"]:
-        owner = meta["owner_id"]
-        if owner.startswith("guest:") and owner not in owners:
-            owners.append(owner)
-
-    for owner in owners:
-        get_collection().delete(where={"owner_id": owner})
-
+    delete_guest_chunks()
     guests.clear()
