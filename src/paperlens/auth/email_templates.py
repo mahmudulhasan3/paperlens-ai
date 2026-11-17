@@ -64,20 +64,20 @@ def layout(preheader, heading, body):
     )
 
 
-# Email step: the login code email, it returns the subject and the html
+# Email step: the code email that confirms a new account, it returns the subject and the html
 def otp_email(code, minutes):
     body = paragraph(
-        "Enter this code to finish logging in to PaperLens-AI."
+        "Welcome! Enter this code to confirm your email and finish creating your PaperLens-AI account."
     ) + code_box(code)
     body = body + paragraph(
         "The code works for " + str(minutes) + " minutes and can be used only once."
     )
     body = body + paragraph(
-        "If you did not try to log in, you can ignore this email. Consider changing your password."
+        "If you did not create an account, you can ignore this email."
     )
 
-    return code + " is your PaperLens-AI login code", layout(
-        "Your login code is " + code, "Your login code", body
+    return code + " is your PaperLens-AI verification code", layout(
+        "Your verification code is " + code, "Confirm your email", body
     )
 
 

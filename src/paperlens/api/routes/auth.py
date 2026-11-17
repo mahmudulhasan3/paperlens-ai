@@ -20,6 +20,7 @@ load_dotenv()
 
 APP_URL = os.getenv("APP_URL", "http://localhost:8501").rstrip("/")
 FORGOT_MESSAGE = "If an account exists for this email, we sent a link to choose a new password."
+RESEND_MESSAGE = "If this email is waiting for confirmation, we sent a new code. Please wait a minute between requests."
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -28,13 +29,10 @@ DUMMY_HASH = hash_password("a-password-that-nobody-uses")
 
 
 # Auth step: request bodies
-class RegisterRequest(BaseModel):
+class SignupRequest(BaseModel):
+    name: str
     email: str
     password: str
-
-
-class CheckEmailRequest(BaseModel):
-    email: str
 
 
 class LoginRequest(BaseModel):
@@ -47,7 +45,7 @@ class VerifyEmailRequest(BaseModel):
     code: str
 
 
-class ForgotRequest(BaseModel):
+class EmailRequest(BaseModel):
     email: str
 
 
@@ -96,44 +94,99 @@ def mark_verified(db, user):
     db.commit()
 
 
-# Auth step: create a new account with a hashed password
-@router.post("/register", status_code=201)
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
+# Auth step: make a new confirmation code, save it and send it to the email of the user
+def send_confirmation_code(db, user):
+    code = codes.make_otp()
+    codes.create_code(db, user.id, "login_otp", code, codes.OTP_MINUTES)
+
+    subject, content = otp_email(code, codes.OTP_MINUTES)
+    return send_email(user.email, subject, content)
+
+
+# Auth step: sign up with name, email and password; a code is sent to confirm the email
+@router.post("/signup", status_code=201)
+def signup(body: SignupRequest, db: Session = Depends(get_db)):
+    name = body.name.strip()
     email = body.email.strip().lower()
 
+    if name == "" or len(name) > 100:
+        raise HTTPException(status_code=400, detail="Enter your name (at most 100 characters)")
     if "@" not in email or "." not in email.split("@")[-1]:
         raise HTTPException(status_code=400, detail="Enter a valid email address")
     if len(body.password) < 8:
         raise HTTPException(status_code=400, detail="The password must have at least 8 characters")
 
-    if find_user(db, email) is not None:
-        raise HTTPException(status_code=409, detail="This email is already registered")
+    user = find_user(db, email)
 
-    user = User(email=email, password_hash=hash_password(body.password))
-    db.add(user)
+    if user is not None and is_verified(db, user):
+        raise HTTPException(status_code=409, detail="This email is already registered. Please log in.")
 
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="This email is already registered")
+    if user is not None and not codes.can_send(db, user.id, "login_otp"):
+        raise HTTPException(
+            status_code=429,
+            detail="A code was sent a moment ago. Please wait a minute before you try again.",
+        )
 
-    db.refresh(user)
-    return {"id": user.id, "email": user.email}
+    if user is None:
+        user = User(email=email, password_hash=hash_password(body.password))
+        db.add(user)
+
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="This email is already registered. Please log in.")
+
+        db.refresh(user)
+    else:
+        # An account that never confirmed its email has no data, so a new sign up replaces it
+        user.password_hash = hash_password(body.password)
+
+    profile = db.get(UserProfile, user.id)
+    if profile is None:
+        db.add(UserProfile(user_id=user.id, display_name=name, bio="", theme="system"))
+    else:
+        profile.display_name = name
+    db.commit()
+
+    if not send_confirmation_code(db, user):
+        raise HTTPException(status_code=502, detail="We could not send the email. Please try again.")
+
+    return {"email_hint": mask_email(user.email), "minutes": codes.OTP_MINUTES}
 
 
-# Auth step: tell the UI if an email already has an account
-@router.post("/check-email")
-def check_email(body: CheckEmailRequest, db: Session = Depends(get_db)):
+# Auth step: confirm the email with the code, then send the welcome email (no login yet)
+@router.post("/verify-email")
+def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
     email = body.email.strip().lower()
+    user = find_user(db, email)
 
-    if "@" not in email or "." not in email.split("@")[-1]:
-        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    if user is None or not codes.verify_otp(db, user.id, body.code):
+        raise HTTPException(status_code=401, detail="The code is wrong or has expired")
 
-    return {"exists": find_user(db, email) is not None}
+    already_verified = is_verified(db, user)
+    mark_verified(db, user)
+
+    if not already_verified:
+        subject, content = welcome_email(name_of(db, user), APP_URL)
+        send_email(user.email, subject, content)
+
+    return {"verified": True, "message": "Your email is confirmed. You can log in now."}
 
 
-# Auth step: login with email and password; a code is needed only once, to confirm the email
+# Auth step: send a new confirmation code (always the same answer, so nobody can find out which emails exist)
+@router.post("/resend-code")
+def resend_code(body: EmailRequest, db: Session = Depends(get_db)):
+    email = body.email.strip().lower()
+    user = find_user(db, email)
+
+    if user is not None and not is_verified(db, user) and codes.can_send(db, user.id, "login_otp"):
+        send_confirmation_code(db, user)
+
+    return {"message": RESEND_MESSAGE}
+
+
+# Auth step: login with email and password, no email is sent
 @router.post("/login")
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     email = body.email.strip().lower()
@@ -157,49 +210,15 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
 
     codes.clear_failures(email)
 
-    # A confirmed email logs in at once
-    if is_verified(db, user):
-        return {"otp_required": False, "access_token": create_access_token(user.id), "token_type": "bearer"}
+    if not is_verified(db, user):
+        raise HTTPException(status_code=403, detail="Your email is not confirmed yet.")
 
-    # An email that was never confirmed gets a 6 digit code
-    if not codes.can_send(db, user.id, "login_otp"):
-        raise HTTPException(
-            status_code=429,
-            detail="A code was sent a moment ago. Please wait a minute before you ask for a new one.",
-        )
-
-    code = codes.make_otp()
-    codes.create_code(db, user.id, "login_otp", code, codes.OTP_MINUTES)
-
-    subject, content = otp_email(code, codes.OTP_MINUTES)
-    if not send_email(user.email, subject, content):
-        raise HTTPException(status_code=502, detail="We could not send the email. Please try again.")
-
-    return {"otp_required": True, "email_hint": mask_email(user.email), "minutes": codes.OTP_MINUTES}
-
-
-# Auth step: confirm the email with the code, then log in and send the welcome email
-@router.post("/verify-email")
-def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
-    email = body.email.strip().lower()
-    user = find_user(db, email)
-
-    if user is None or not codes.verify_otp(db, user.id, body.code):
-        raise HTTPException(status_code=401, detail="The code is wrong or has expired")
-
-    already_verified = is_verified(db, user)
-    mark_verified(db, user)
-
-    if not already_verified:
-        subject, content = welcome_email(name_of(db, user), APP_URL)
-        send_email(user.email, subject, content)
-
-    return {"access_token": create_access_token(user.id), "token_type": "bearer", "first_login": not already_verified}
+    return {"access_token": create_access_token(user.id), "token_type": "bearer"}
 
 
 # Auth step: forgot password. It always gives the same answer, so nobody can find out which emails exist
 @router.post("/forgot-password")
-def forgot_password(body: ForgotRequest, db: Session = Depends(get_db)):
+def forgot_password(body: EmailRequest, db: Session = Depends(get_db)):
     email = body.email.strip().lower()
     user = find_user(db, email)
 
