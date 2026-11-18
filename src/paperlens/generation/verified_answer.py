@@ -1,7 +1,7 @@
 from paperlens.indexing.bm25_index import build_bm25_index
 from paperlens.retrieval.hybrid import hybrid_search
 from paperlens.generation.prompts import build_prompt, ABSTAIN_TEXT
-from paperlens.generation.answer import find_citations
+from paperlens.generation.answer import renumber_citations
 from paperlens.generation.llm import generate_text
 from paperlens.verification.claim_extractor import extract_claims
 from paperlens.verification.verifier import verify_claims
@@ -109,13 +109,14 @@ def answer_verified(question, owner_id, top_k=5):
         return make_abstain("no claim could be verified", table, tokens, latency)
 
     final_answer = "\n".join(lines)
+    renumbered = renumber_citations(final_answer, pool)
 
     return {
-        "answer": final_answer,
+        "answer": renumbered["text"],
         "abstained": False,
         "reason": "",
         "claims": table,
-        "citations": find_citations(final_answer, pool),
+        "citations": renumbered["citations"],
         "removed_claims": removed,
         "total_tokens": tokens,
         "total_latency": round(latency, 2),

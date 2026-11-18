@@ -1,6 +1,6 @@
 from paperlens.indexing.vector_store import search_document
 from paperlens.generation.prompts import build_context
-from paperlens.generation.answer import find_citations
+from paperlens.generation.answer import renumber_citations
 from paperlens.generation.llm import generate_text
 
 NOT_STATED = "Not stated in the document."
@@ -46,11 +46,12 @@ def extract_from_document(owner_id, doc_id, request, top_k=6):
 
     result = generate_text(build_extract_prompt(request, chunks))
     extracted = result["text"].strip()
+    renumbered = renumber_citations(extracted, chunks)
 
     return {
-        "extracted": extracted,
+        "extracted": renumbered["text"],
         "not_found": NOT_STATED in extracted,
-        "citations": find_citations(extracted, chunks),
+        "citations": renumbered["citations"],
         "prompt_tokens": result["prompt_tokens"],
         "output_tokens": result["output_tokens"],
         "latency": result["latency"],

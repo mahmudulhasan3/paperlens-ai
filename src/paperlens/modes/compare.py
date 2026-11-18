@@ -1,6 +1,6 @@
 from paperlens.indexing.vector_store import search_document
 from paperlens.generation.prompts import build_context
-from paperlens.generation.answer import find_citations
+from paperlens.generation.answer import renumber_citations
 from paperlens.generation.llm import generate_text
 
 NOT_STATED = "Not stated in the provided sources."
@@ -106,11 +106,12 @@ def compare_documents(owner_id, doc_ids):
     chunks, names = collect_evidence(owner_id, doc_ids)
     result = generate_text(build_compare_prompt(chunks, names))
     comparison = result["text"].strip()
+    renumbered = renumber_citations(comparison, chunks)
 
     return {
-        "comparison": comparison,
+        "comparison": renumbered["text"],
         "documents": names,
-        "citations": find_citations(comparison, chunks),
+        "citations": renumbered["citations"],
         "prompt_tokens": result["prompt_tokens"],
         "output_tokens": result["output_tokens"],
         "latency": result["latency"],
