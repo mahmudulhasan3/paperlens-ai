@@ -40,5 +40,5 @@ pillow==13.0.0
 # PDF Upload Support
 python-multipart==0.0.33
 
-# Database Driver
-psycopg-binary==3.3.8
+# PostgreSQL Database Driver
+psycopg[binary]==3.3.8
