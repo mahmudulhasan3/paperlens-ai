@@ -1,0 +1,44 @@
+# Backend API
+fastapi==0.162.0
+uvicorn==0.54.0
+
+# Data Validation
+pydantic==2.14.2
+
+# PDF Processing
+pymupdf==2.1
+
+# LLM Integration
+google-genai==2.34.0
+
+# Embeddings
+sentence-transformers==6.2.0
+
+# Hybrid Retrieval - BM25
+rank-bm25==0.2.2
+
+# Database ORM
+SQLAlchemy==2.1.8
+pgvector==0.5.1
+
+# Authentication & Security
+PyJWT==2.15.1
+pwdlib==0.3.1
+
+# Environment Variables
+python-dotenv==1.2.4
+
+# HTTP Requests
+requests==2.34.2
+
+# Frontend
+streamlit==1.67.0
+
+# Image Processing
+pillow==13.0.0
+
+# PDF Upload Support
+python-multipart==0.0.33
+
+# Database Driver
+psycopg-binary==3.3.8
