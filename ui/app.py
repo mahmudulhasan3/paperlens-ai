@@ -1,10 +1,11 @@
+import os
 import html
 import time
 
 import requests
 import streamlit as st
 
-API_URL = "http://127.0.0.1:8000"
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 LINKEDIN_URL = "https://www.linkedin.com/in/mahmudulhasan03"
 THEME_LABELS = ["System", "Light", "Dark"]
 MODE_LABELS = {
