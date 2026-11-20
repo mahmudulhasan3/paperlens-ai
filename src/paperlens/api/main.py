@@ -256,9 +256,11 @@ def upload_pdf(
     add_chunks(chunks)
     state["indexes"].pop(owner_id, None)
 
+    # The PDF file is not needed any more, the chunks are enough
+    os.remove(save_path)
+
     # Guests keep nothing on disk, the chunks are enough and they are temporary
     if is_guest:
-        os.remove(save_path)
         guest["documents"].append(
             {
                 "doc_id": doc_id,
@@ -288,7 +290,6 @@ def upload_pdf(
     except Exception:
         db.rollback()
         delete_document_chunks(owner_id, doc_id)
-        os.remove(save_path)
         raise HTTPException(status_code=500, detail="Could not save the document")
 
     return {

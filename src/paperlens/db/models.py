@@ -134,4 +134,4 @@ class Chunk(Base):
     page_end: Mapped[int] = mapped_column()
     word_count: Mapped[int] = mapped_column()
     text: Mapped[str] = mapped_column(Text)
-    embedding: Mapped[list[float]] = mapped_column(Vector(384))
+    embedding: Mapped[list[float]] = mapped_column(Vector(768))

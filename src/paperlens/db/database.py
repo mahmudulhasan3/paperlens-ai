@@ -12,7 +12,7 @@ if DATABASE_URL is None:
     raise ValueError("DATABASE_URL is missing in the .env file")
 
 # Database step: one engine for the whole project
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 # Database step: a factory that creates one session for every request
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)

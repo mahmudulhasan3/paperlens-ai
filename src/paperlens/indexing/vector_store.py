@@ -2,8 +2,7 @@ from sqlalchemy import delete, func, select
 
 from paperlens.db.database import SessionLocal
 from paperlens.db.models import Chunk
-from paperlens.indexing.embeddings import embed_texts
-
+from paperlens.indexing.embeddings import embed_texts, embed_query
 
 # Phase 2 (Vector store): the details of a chunk, in the same shape that the rest of the project already uses
 def to_metadata(row):
@@ -60,7 +59,7 @@ def count_chunks(owner_id):
 
 # Phase 2 (Vector store): find the chunks closest in meaning, only inside one owner's documents
 def search(question, owner_id, top_k=5):
-    query_vector = embed_texts([question])[0]
+    query_vector = embed_query(question)
     hits = []
 
     with SessionLocal() as db:
