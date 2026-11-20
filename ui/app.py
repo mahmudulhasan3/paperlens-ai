@@ -17,7 +17,7 @@ def read_setting(name, default):
     return os.getenv(name, default)
 
 
-API_URL = read_setting("API_URL", "http://127.0.0.1:8000").rstrip("/")
+API_URL = read_setting("API_URL", "https://paperlens-ai-9meo.onrender.com").rstrip("/")
 
 LINKEDIN_URL = "https://www.linkedin.com/in/mahmudulhasan03"
 THEME_LABELS = ["System", "Light", "Dark"]
