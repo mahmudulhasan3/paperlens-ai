@@ -5,7 +5,20 @@ import time
 import requests
 import streamlit as st
 
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+
+# UI setting: read a setting from the Streamlit secrets (Streamlit Cloud) or from the environment (local and Docker)
+def read_setting(name, default):
+    try:
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+
+    return os.getenv(name, default)
+
+
+API_URL = read_setting("API_URL", "http://127.0.0.1:8000").rstrip("/")
+
 LINKEDIN_URL = "https://www.linkedin.com/in/mahmudulhasan03"
 THEME_LABELS = ["System", "Light", "Dark"]
 MODE_LABELS = {
@@ -239,16 +252,24 @@ def clear_session():
     st.session_state["otp_hint"] = ""
 
 
-# UI helper: start a guest session automatically, so the chat is open at once
+# UI helper: start a guest session automatically; a sleeping free server needs about a minute to wake up
 def start_guest():
-    try:
-        response = requests.post(API_URL + "/auth/guest", timeout=20)
-    except requests.RequestException:
-        st.error("Cannot reach the server. Please start the API and reload this page.")
-        st.stop()
+    response = None
 
-    if response.status_code != 200:
-        st.error("Could not start a guest session. Please reload this page.")
+    with st.spinner(
+        "Waking up the server. Free hosting sleeps when nobody uses it, this can take up to a minute..."
+    ):
+        for attempt in range(12):
+            try:
+                response = requests.post(API_URL + "/auth/guest", timeout=30)
+                if response.status_code == 200:
+                    break
+            except requests.RequestException:
+                response = None
+            time.sleep(5)
+
+    if response is None or response.status_code != 200:
+        st.error("The server is not answering. Please reload this page in a minute.")
         st.stop()
 
     clear_session()
