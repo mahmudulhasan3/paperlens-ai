@@ -1,7 +1,7 @@
 import os
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -15,6 +15,7 @@ from paperlens.auth.guests import register_guest, purge_expired_guests
 from paperlens.auth.security import hash_password, verify_password, create_access_token, create_guest_token
 from paperlens.db.database import get_db
 from paperlens.db.models import User, UserProfile, UserFlag
+from paperlens.ratelimit import check_rate
 
 load_dotenv()
 
@@ -105,7 +106,14 @@ def send_confirmation_code(db, user):
 
 # Auth step: sign up with name, email and password; a code is sent to confirm the email
 @router.post("/signup", status_code=201)
-def signup(body: SignupRequest, db: Session = Depends(get_db)):
+def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db)):
+    check_rate(
+        request,
+        "signup",
+        5,
+        3600,
+        "Too many sign up attempts from this network. Please try again later.",
+    )
     name = body.name.strip()
     email = body.email.strip().lower()
 
@@ -176,7 +184,14 @@ def verify_email(body: VerifyEmailRequest, db: Session = Depends(get_db)):
 
 # Auth step: send a new confirmation code (always the same answer, so nobody can find out which emails exist)
 @router.post("/resend-code")
-def resend_code(body: EmailRequest, db: Session = Depends(get_db)):
+def resend_code(request: Request, body: EmailRequest, db: Session = Depends(get_db)):
+    check_rate(
+        request,
+        "resend",
+        8,
+        3600,
+        "Too many requests from this network. Please try again later.",
+    )
     email = body.email.strip().lower()
     user = find_user(db, email)
 
@@ -188,7 +203,14 @@ def resend_code(body: EmailRequest, db: Session = Depends(get_db)):
 
 # Auth step: login with email and password, no email is sent
 @router.post("/login")
-def login(body: LoginRequest, db: Session = Depends(get_db)):
+def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
+    check_rate(
+        request,
+        "login",
+        30,
+        600,
+        "Too many log in attempts from this network. Please try again in a few minutes.",
+    )
     email = body.email.strip().lower()
 
     if codes.is_locked(email):
@@ -218,7 +240,16 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
 
 # Auth step: forgot password. It always gives the same answer, so nobody can find out which emails exist
 @router.post("/forgot-password")
-def forgot_password(body: EmailRequest, db: Session = Depends(get_db)):
+def forgot_password(
+    request: Request, body: EmailRequest, db: Session = Depends(get_db)
+):
+    check_rate(
+        request,
+        "forgot",
+        5,
+        3600,
+        "Too many requests from this network. Please try again later.",
+    )
     email = body.email.strip().lower()
     user = find_user(db, email)
 
@@ -262,7 +293,14 @@ def me(current_user: User = Depends(get_current_user)):
 
 # Auth step: start a guest session (no account needed, the data is temporary)
 @router.post("/guest")
-def start_guest():
+def start_guest(request: Request):
+    check_rate(
+        request,
+        "guest",
+        10,
+        3600,
+        "Too many sessions from this network. Please try again later.",
+    )
     purge_expired_guests()
 
     token, guest_id = create_guest_token()

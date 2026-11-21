@@ -5,7 +5,7 @@ import uuid
 from datetime import timedelta
 
 import pymupdf
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -32,6 +32,7 @@ from paperlens.modes.summarize import summarize_document
 from paperlens.modes.compare import compare_documents
 from paperlens.modes.extract import extract_from_document
 from paperlens.modes.router import route_message
+from paperlens.ratelimit import check_rate
 
 app = FastAPI(title="PaperLens-AI")
 
@@ -161,10 +162,19 @@ def health(db: Session = Depends(get_db)):
 # API step: receive a PDF from a guest or a user, process it and store its chunks
 @app.post("/upload")
 def upload_pdf(
+    request: Request,
     file: UploadFile = File(...),
     actor: dict = Depends(get_actor),
     db: Session = Depends(get_db),
 ):
+    if actor["kind"] == "guest":
+        check_rate(
+            request,
+            "guest_upload",
+            10,
+            3600,
+            "Too many uploads from this network. Please log in or try again later.",
+        )
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
@@ -459,11 +469,23 @@ def extract(body: ExtractRequest, actor: dict = Depends(get_actor)):
 # API step: one entry point, the router picks the mode; registered users get the chat saved
 @app.post("/chat")
 def chat(
-    body: ChatRequest, actor: dict = Depends(get_actor), db: Session = Depends(get_db)
+    request: Request,
+    body: ChatRequest,
+    actor: dict = Depends(get_actor),
+    db: Session = Depends(get_db),
 ):
     message_text = body.message.strip()
     if message_text == "":
         raise HTTPException(status_code=400, detail="Write a message")
+
+    if actor["kind"] == "guest":
+        check_rate(
+            request,
+            "guest_chat",
+            40,
+            3600,
+            "Too many questions from this network. Please log in or try again later.",
+        )
 
     check_query_limit(actor, db)
 
